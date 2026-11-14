@@ -38,12 +38,15 @@ Abra `http://localhost:5000`. Para testar o chat localmente, configure as mesmas
 
 Publique como **Web Service**, não como Static Site:
 
-1. Conecte o repositório no Render e selecione o runtime **Python**.
-2. Build Command: `pip install -r requirements.txt`
-3. Start Command: `gunicorn server:app --workers 1 --threads 4 --timeout 40`
-4. Em **Environment**, crie `GEMINI_API_KEY` e `FIREBASE_SERVICE_ACCOUNT` como valores secretos. Configure `GEMINI_MODEL` somente se quiser trocar o modelo padrão.
-5. Adicione o domínio `onrender.com` do serviço aos domínios autorizados no Firebase Authentication.
-6. Use `/api/health` como health check, se desejar.
+O repositório inclui `render.yaml`. No painel Render, use **New > Blueprint**, conecte o mesmo repositório e aplique o Blueprint. Ele cria um novo Web Service chamado `vspminimalist-web`. Mantenha o Static Site atual até confirmar que o novo serviço está funcionando; não tente executar o backend como Static Site.
+
+Se criar o serviço manualmente, selecione runtime **Python**, Build Command `pip install -r requirements.txt` e Start Command `gunicorn server:app --workers 1 --threads 4 --timeout 40`.
+
+Depois do deploy:
+
+1. Em **Environment**, adicione `FIREBASE_SERVICE_ACCOUNT` como segredo. Adicione `GEMINI_API_KEY` quando tiver uma chave do Gemini. `GEMINI_MODEL` é opcional.
+2. Adicione o novo domínio `onrender.com` aos domínios autorizados no Firebase Authentication.
+3. Use `/api/health` como health check, se desejar.
 
 Para criar `FIREBASE_SERVICE_ACCOUNT`, gere uma chave de conta de serviço no projeto Firebase/Google Cloud e cole o JSON diretamente no campo secreto do Render. Não salve esse arquivo no repositório. Restrinja a conta às permissões de Firestore necessárias para ler os quadros.
 
@@ -57,6 +60,7 @@ Para criar `FIREBASE_SERVICE_ACCOUNT`, gere uma chave de conta de serviço no pr
 
 - **`auth/operation-not-allowed`**: ative o provedor E-mail/senha no Firebase Authentication.
 - **`auth/unauthorized-domain`**: adicione o domínio publicado à lista de domínios autorizados.
+- **`Cloud Firestore API has not been used` ou API desativada**: abra [a página da API Firestore do projeto](https://console.cloud.google.com/apis/api/firestore.googleapis.com/overview?project=meu-quadro-kanban-c340c) e clique em **Ativar**. Confirme também que o banco foi criado em **Firestore Database** no Firebase Console; aguarde alguns minutos e recarregue o app. A hospedagem no Render não ativa APIs do projeto Google Cloud.
 - **Erro de `FIREBASE_SERVICE_ACCOUNT`**: confira se o JSON completo está configurado como segredo e corresponde ao mesmo projeto do app.
 - **IA informa que falta configuração**: adicione `GEMINI_API_KEY` e `FIREBASE_SERVICE_ACCOUNT` nas variáveis do serviço Render e faça um novo deploy.
 - **Falha ao carregar ou salvar tarefas**: confira as regras de `firestore.rules` e se o Firestore está ativo no projeto indicado em `firebase-config.js`.

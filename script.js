@@ -96,6 +96,32 @@ function setSyncStatus(message, isError = false) {
   syncStatus.classList.toggle('is-error', isError);
 }
 
+function showBoardError(error) {
+  const message = String(error.message || '');
+  const normalized = message.toLowerCase();
+  const firestoreApiDisabled = normalized.includes('firestore.googleapis.com') &&
+    (normalized.includes('not been used') || normalized.includes('disabled'));
+
+  if (firestoreApiDisabled) {
+    const disabledMessage =
+      `A API do Cloud Firestore está desativada no projeto ${firebaseConfig.projectId}. ` +
+      'Ative-a no Google Cloud Console e aguarde alguns minutos.';
+    setSyncStatus(disabledMessage, true);
+    const link = document.createElement('a');
+    link.href = `https://console.cloud.google.com/apis/api/firestore.googleapis.com/overview?project=${encodeURIComponent(firebaseConfig.projectId)}`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Abrir configuração da API';
+    syncStatus.append(document.createElement('br'), link);
+    return;
+  }
+  if (error.code === 'permission-denied') {
+    setSyncStatus('Sem permissão para acessar o quadro. Confira se as regras do Firestore foram publicadas.', true);
+    return;
+  }
+  setSyncStatus(`Não foi possível abrir o quadro: ${message}`, true);
+}
+
 function setAuthenticatedView(user) {
   loginScreen.hidden = Boolean(user);
   appHeader.hidden = !user;
@@ -170,7 +196,7 @@ async function openBoard(user) {
     setSyncStatus('Sincronizado');
   }, error => {
     if (generation !== boardGeneration) return;
-    setSyncStatus(`Falha ao sincronizar: ${error.message}`, true);
+    showBoardError(error);
   });
 }
 
@@ -257,7 +283,7 @@ onAuthStateChanged(auth, user => {
   }
   setAuthenticatedView(user);
   openBoard(user).catch(error => {
-    setSyncStatus(`Não foi possível abrir o quadro: ${error.message}`, true);
+    showBoardError(error);
   });
 }, error => {
   setLoginMessage(`Não foi possível verificar sua sessão: ${error.message}`);
@@ -366,6 +392,17 @@ function cardEl(task) {
   });
   footer.append(date, move);
   element.append(footer);
+
+  element.addEventListener('pointermove', event => {
+    if (event.pointerType !== 'mouse') return;
+    const bounds = element.getBoundingClientRect();
+    element.style.setProperty('--pointer-x', `${event.clientX - bounds.left}px`);
+    element.style.setProperty('--pointer-y', `${event.clientY - bounds.top}px`);
+  });
+  element.addEventListener('pointerleave', () => {
+    element.style.removeProperty('--pointer-x');
+    element.style.removeProperty('--pointer-y');
+  });
 
   element.addEventListener('dragstart', event => {
     draggedId = task.id;

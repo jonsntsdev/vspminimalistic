@@ -38,10 +38,20 @@ const form = $('#taskForm');
 const passwordInput = $('#passwordInput');
 const loginMessage = $('#loginMessage');
 const syncStatus = $('#syncStatus');
+const assistantPanel = $('#assistantPanel');
+const assistantLauncher = $('#assistantLauncher');
+const assistantMessages = $('#assistantMessages');
+const assistantInput = $('#assistantInput');
+const assistantSend = $('#assistantSend');
 
 let authMode = 'login';
 let tasks = [];
 let draggedId = null;
+let breakingTaskId = null;
+let assistantBusy = false;
+let assistantGeneration = 0;
+let assistantUserId = null;
+const subtaskErrors = new Map();
 let boardRef = null;
 let unsubscribeBoard = null;
 let pendingWrites = 0;
@@ -99,6 +109,8 @@ function stopBoardListener() {
   unsubscribeBoard = null;
   boardRef = null;
   tasks = [];
+  breakingTaskId = null;
+  subtaskErrors.clear();
   pendingWrites = 0;
   writeQueue = Promise.resolve();
 }
@@ -109,7 +121,16 @@ function isTask(task) {
     typeof task.title === 'string' &&
     typeof task.desc === 'string' &&
     COLUMNS.includes(task.status) &&
-    Number.isFinite(task.createdAt);
+    Number.isFinite(task.createdAt) &&
+    (task.subtasks === undefined || (
+      Array.isArray(task.subtasks) &&
+      task.subtasks.every(item =>
+        item &&
+        typeof item.id === 'string' &&
+        typeof item.title === 'string' &&
+        typeof item.done === 'boolean'
+      )
+    ));
 }
 
 async function openBoard(user) {
@@ -224,9 +245,15 @@ $('#logoutBtn').addEventListener('click', async () => {
 
 onAuthStateChanged(auth, user => {
   if (!user) {
+    assistantUserId = null;
+    resetAssistant();
     stopBoardListener();
     setAuthenticatedView(null);
     return;
+  }
+  if (assistantUserId !== user.uid) {
+    assistantUserId = user.uid;
+    resetAssistant();
   }
   setAuthenticatedView(user);
   openBoard(user).catch(error => {
@@ -267,6 +294,50 @@ function cardEl(task) {
     description.textContent = task.desc;
     element.append(description);
   }
+
+  const taskTools = document.createElement('div');
+  taskTools.className = 'task-tools';
+  if (task.subtasks && task.subtasks.length) {
+    const checklist = document.createElement('ul');
+    checklist.className = 'subtask-list';
+    task.subtasks.forEach((subtask, index) => {
+      const item = document.createElement('li');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = subtask.done;
+      checkbox.setAttribute('aria-label', `Concluir subtarefa: ${subtask.title}`);
+      checkbox.addEventListener('change', () => {
+        task.subtasks[index].done = checkbox.checked;
+        render();
+        persistTasks();
+      });
+      const label = document.createElement('span');
+      label.textContent = subtask.title;
+      if (subtask.done) label.className = 'is-complete';
+      item.append(checkbox, label);
+      checklist.append(item);
+    });
+    taskTools.append(checklist);
+  }
+  const splitButton = document.createElement('button');
+  splitButton.type = 'button';
+  splitButton.className = 'btn-breakdown';
+  splitButton.disabled = Boolean(breakingTaskId);
+  splitButton.textContent = breakingTaskId === task.id
+    ? 'Criando checklist…'
+    : task.subtasks && task.subtasks.length
+      ? 'Refazer checklist com IA'
+      : 'Quebrar em subtarefas';
+  splitButton.setAttribute('aria-label', `Gerar checklist para a tarefa: ${task.title}`);
+  splitButton.addEventListener('click', () => breakTaskIntoSubtasks(task.id));
+  taskTools.append(splitButton);
+  if (subtaskErrors.has(task.id)) {
+    const error = document.createElement('p');
+    error.className = 'task-ai-error';
+    error.textContent = subtaskErrors.get(task.id);
+    taskTools.append(error);
+  }
+  element.append(taskTools);
 
   const deleteButton = document.createElement('button');
   deleteButton.type = 'button';
@@ -312,6 +383,137 @@ function cardEl(task) {
 
 function uid() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function postAIRequest(path, payload) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Entre na sua conta para usar o assistente.');
+  const token = await user.getIdToken();
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify(payload)
+  });
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('O servidor do assistente retornou uma resposta inválida.');
+  }
+  if (!response.ok) throw new Error(data.error || `Falha no assistente (HTTP ${response.status}).`);
+  return data;
+}
+
+function appendChatMessage(text, role) {
+  const message = document.createElement('div');
+  message.className = `chat-bubble ${role}-bubble`;
+  message.textContent = text;
+  assistantMessages.append(message);
+  assistantMessages.scrollTop = assistantMessages.scrollHeight;
+  return message;
+}
+
+async function sendAssistantQuestion(question) {
+  const cleanQuestion = question.trim();
+  if (!cleanQuestion || assistantBusy) return;
+  const generation = assistantGeneration;
+  assistantBusy = true;
+  assistantSend.disabled = true;
+  $('#assistantSuggestions').hidden = true;
+  assistantInput.value = '';
+  appendChatMessage(cleanQuestion, 'user');
+  const pendingMessage = appendChatMessage('Consultando as tarefas do seu quadro…', 'assistant');
+  pendingMessage.classList.add('is-pending');
+  try {
+    const result = await postAIRequest('/api/ai/chat', { question: cleanQuestion });
+    if (typeof result.answer !== 'string' || !result.answer.trim()) {
+      throw new Error('O assistente não retornou uma resposta válida. Tente novamente.');
+    }
+    pendingMessage.textContent = result.answer;
+    pendingMessage.classList.remove('is-pending');
+  } catch (error) {
+    pendingMessage.classList.remove('is-pending');
+    pendingMessage.classList.add('is-error');
+    pendingMessage.textContent = error instanceof TypeError
+      ? 'Não foi possível acessar o servidor do assistente. Verifique a publicação no Render.'
+      : error.message;
+  } finally {
+    if (generation === assistantGeneration) {
+      assistantBusy = false;
+      assistantSend.disabled = false;
+      assistantInput.focus();
+      assistantMessages.scrollTop = assistantMessages.scrollHeight;
+    }
+  }
+}
+
+async function breakTaskIntoSubtasks(taskId) {
+  const task = tasks.find(item => item.id === taskId);
+  if (!task || breakingTaskId) return;
+  const generation = boardGeneration;
+  breakingTaskId = taskId;
+  subtaskErrors.delete(taskId);
+  render();
+  try {
+    const result = await postAIRequest('/api/ai/subtasks', { taskId });
+    if (generation !== boardGeneration) return;
+    if (!Array.isArray(result.subtasks) || result.subtasks.length < 3 || result.subtasks.length > 8 ||
+        !result.subtasks.every(title => typeof title === 'string' && title.trim())) {
+      throw new Error('O assistente retornou um checklist inválido. Tente novamente.');
+    }
+    const latestTask = tasks.find(item => item.id === taskId);
+    if (!latestTask) throw new Error('Esta tarefa não está mais no quadro.');
+    latestTask.subtasks = result.subtasks.map(title => ({
+      id: uid(),
+      title: title.trim(),
+      done: false
+    }));
+    render();
+    persistTasks();
+  } catch (error) {
+    if (generation !== boardGeneration) return;
+    subtaskErrors.set(taskId, error instanceof TypeError
+      ? 'Não foi possível acessar o servidor do assistente.'
+      : error.message);
+  } finally {
+    if (generation === boardGeneration) {
+      breakingTaskId = null;
+      render();
+    }
+  }
+}
+
+function resetAssistant() {
+  assistantGeneration += 1;
+  assistantBusy = false;
+  assistantPanel.hidden = true;
+  assistantLauncher.hidden = false;
+  assistantLauncher.setAttribute('aria-expanded', 'false');
+  assistantSend.disabled = false;
+  assistantInput.value = '';
+  assistantMessages.replaceChildren();
+  appendChatMessage(
+    'Oi! Posso ajudar a entender o que está acontecendo no seu quadro. Minhas respostas usam apenas as tarefas salvas nele.',
+    'assistant'
+  );
+  const suggestions = document.createElement('div');
+  suggestions.className = 'assistant-suggestions';
+  suggestions.id = 'assistantSuggestions';
+  [
+    ['O que está travado?', 'O que está em andamento e parece travado?'],
+    ['O que falta lançar?', 'O que falta lançar no quadro?'],
+    ['Quem tem mais tarefas?', 'Quem tem mais tarefas?']
+  ].forEach(([label, prompt]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.prompt = prompt;
+    button.textContent = label;
+    suggestions.append(button);
+  });
+  assistantMessages.append(suggestions);
 }
 
 function addTask(title, desc) {
@@ -375,6 +577,26 @@ $('#openModal').addEventListener('click', () => {
 $('#cancelBtn').addEventListener('click', () => modal.close());
 modal.addEventListener('click', event => {
   if (event.target === modal) modal.close();
+});
+assistantLauncher.addEventListener('click', () => {
+  assistantPanel.hidden = false;
+  assistantLauncher.hidden = true;
+  assistantLauncher.setAttribute('aria-expanded', 'true');
+  assistantInput.focus();
+});
+$('#assistantClose').addEventListener('click', () => {
+  assistantPanel.hidden = true;
+  assistantLauncher.hidden = false;
+  assistantLauncher.setAttribute('aria-expanded', 'false');
+  assistantLauncher.focus();
+});
+$('#assistantForm').addEventListener('submit', event => {
+  event.preventDefault();
+  sendAssistantQuestion(assistantInput.value);
+});
+assistantMessages.addEventListener('click', event => {
+  const suggestion = event.target.closest('[data-prompt]');
+  if (suggestion) sendAssistantQuestion(suggestion.dataset.prompt);
 });
 form.addEventListener('submit', event => {
   event.preventDefault();

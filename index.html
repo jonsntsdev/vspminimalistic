@@ -76,6 +76,36 @@
         <div class="cards" data-list="done"></div>
       </section>
     </div>
+
+    <button class="assistant-launcher" id="assistantLauncher" type="button" aria-controls="assistantPanel" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6a7.5 7.5 0 1 1 17-3.5Z"/><path d="M8 11h8M8 14h5"/></svg>
+      Pergunte ao seu projeto
+    </button>
+    <aside class="assistant-panel" id="assistantPanel" aria-labelledby="assistantTitle" hidden>
+      <div class="assistant-header">
+        <div>
+          <p class="eyebrow">VSP AI</p>
+          <h2 id="assistantTitle">Pergunte ao seu projeto</h2>
+        </div>
+        <button class="assistant-close" id="assistantClose" type="button" aria-label="Fechar assistente">×</button>
+      </div>
+      <div class="assistant-messages" id="assistantMessages" role="log" aria-live="polite" aria-relevant="additions text">
+        <div class="chat-bubble assistant-bubble">Oi! Posso ajudar a entender o que está acontecendo no seu quadro. Minhas respostas usam apenas as tarefas salvas nele.</div>
+        <div class="assistant-suggestions" id="assistantSuggestions">
+          <button type="button" data-prompt="O que está em andamento e parece travado?">O que está travado?</button>
+          <button type="button" data-prompt="O que falta lançar no quadro?">O que falta lançar?</button>
+          <button type="button" data-prompt="Quem tem mais tarefas?">Quem tem mais tarefas?</button>
+        </div>
+      </div>
+      <form class="assistant-form" id="assistantForm">
+        <label class="sr-only" for="assistantInput">Pergunte ao seu projeto</label>
+        <textarea id="assistantInput" rows="2" maxlength="600" required placeholder="Pergunte sobre suas tarefas…"></textarea>
+        <button class="assistant-send" id="assistantSend" type="submit" aria-label="Enviar pergunta">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 14-7-5 14-3-6-6-1Z"/><path d="m11 13 4-4"/></svg>
+        </button>
+      </form>
+      <p class="assistant-footnote">Respostas geradas por IA a partir dos dados reais do quadro.</p>
+    </aside>
   </main>
 
   <dialog id="modal" aria-labelledby="modalTitle">

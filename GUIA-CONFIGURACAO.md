@@ -1,38 +1,62 @@
 # vspminimalist: configuração e publicação
 
-O app usa Firebase Authentication para contas e Cloud Firestore para salvar as tarefas. Não há conta de demonstração nem dados de exemplo: cada pessoa cria a própria conta e recebe um quadro vazio.
+O app usa Firebase Authentication e Cloud Firestore. O chat e a criação de checklists com IA passam pelo backend deste projeto; a chave do Gemini fica somente no ambiente do servidor, nunca no navegador.
 
 ## Preparar o Firebase
 
 1. No [Firebase Console](https://console.firebase.google.com/), crie um projeto ou use um projeto existente.
 2. Em **Authentication > Método de login**, ative **E-mail/senha**.
 3. Em **Firestore Database**, crie o banco em **modo de produção**.
-4. Registre um app Web e confira se `firebase-config.js` contém os dados do app. A configuração Web identifica o projeto; nunca coloque chaves privadas ou senhas nesse arquivo.
+4. Confira se `firebase-config.js` contém os dados do app Web. Essa configuração identifica o projeto; não coloque nela chaves privadas ou senhas.
 5. Em **Firestore Database > Regras**, publique o conteúdo de `firestore.rules`.
 6. Em **Authentication > Configurações > Domínios autorizados**, adicione o domínio em que o app será publicado.
 
-O app cria um documento em `boards/{uid}` no primeiro acesso autenticado. As regras permitem ao usuário acessar somente o próprio quadro. Não é necessário criar coleções manualmente.
+O app cria um documento em `boards/{uid}` no primeiro acesso autenticado. O backend valida o token do Firebase e consulta somente o quadro associado ao usuário autenticado.
+
+## Configurar a IA
+
+Crie uma chave do Gemini no Google AI Studio. No ambiente do servidor, configure:
+
+- `GEMINI_API_KEY`: chave do Gemini, mantida como segredo.
+- `FIREBASE_SERVICE_ACCOUNT`: conteúdo JSON de uma conta de serviço do projeto Firebase, mantido como segredo.
+- `GEMINI_MODEL`: opcional; o padrão é `gemini-2.5-flash`.
+
+O chat envia ao Gemini apenas título, descrição, status e checklist das tarefas do quadro autenticado. Não envie essas chaves pelo chat, não as coloque em `firebase-config.js` e não as versione no Git.
 
 ## Testar localmente
 
-Abra a pasta no VS Code e inicie um servidor estático, por exemplo com a extensão Live Server. O app usa módulos JavaScript e não funciona ao abrir `index.html` diretamente como arquivo.
+Instale Python 3.10 ou superior e execute:
 
-1. Crie uma conta com e-mail e senha de pelo menos 8 caracteres.
-2. Adicione tarefas, mova-as entre as colunas e recarregue a página para confirmar que foram salvas.
-3. Saia e entre novamente para confirmar que o quadro está associado à conta.
+```text
+pip install -r requirements.txt
+python server.py
+```
+
+Abra `http://localhost:5000`. Para testar o chat localmente, configure as mesmas variáveis de ambiente do servidor antes de iniciar o app. Sem as credenciais de backend, a interface e o quadro continuam disponíveis, mas as rotas de IA informam que falta configuração.
 
 ## Publicar no Render
 
-1. Envie os arquivos do projeto para um repositório Git.
-2. No Render, crie um **Static Site** conectado ao repositório.
-3. Defina o diretório de publicação como `.` (raiz do projeto); não é necessário comando de build.
-4. Depois da publicação, adicione o domínio `onrender.com` do site à lista de domínios autorizados do Firebase Authentication.
+Publique como **Web Service**, não como Static Site:
 
-Se usar um domínio personalizado, autorize esse domínio no Firebase também.
+1. Conecte o repositório no Render e selecione o runtime **Python**.
+2. Build Command: `pip install -r requirements.txt`
+3. Start Command: `gunicorn server:app --workers 1 --threads 4 --timeout 40`
+4. Em **Environment**, crie `GEMINI_API_KEY` e `FIREBASE_SERVICE_ACCOUNT` como valores secretos. Configure `GEMINI_MODEL` somente se quiser trocar o modelo padrão.
+5. Adicione o domínio `onrender.com` do serviço aos domínios autorizados no Firebase Authentication.
+6. Use `/api/health` como health check, se desejar.
+
+Para criar `FIREBASE_SERVICE_ACCOUNT`, gere uma chave de conta de serviço no projeto Firebase/Google Cloud e cole o JSON diretamente no campo secreto do Render. Não salve esse arquivo no repositório. Restrinja a conta às permissões de Firestore necessárias para ler os quadros.
+
+## Recursos do Kanban com IA
+
+- **Pergunte ao seu projeto**: consulta as tarefas reais do quadro e responde sem inventar informações ausentes.
+- **Quebrar em subtarefas**: o botão em cada card gera um checklist editável, salvo junto com a tarefa no Firestore.
+- As rotas de IA exigem um token válido do Firebase e limitam o volume de perguntas por usuário.
 
 ## Solução de problemas
 
 - **`auth/operation-not-allowed`**: ative o provedor E-mail/senha no Firebase Authentication.
-- **`auth/unauthorized-domain`**: adicione o domínio publicado à lista de domínios autorizados do Firebase.
-- **Falha ao carregar ou salvar o quadro**: confira se as regras de `firestore.rules` foram publicadas e se o Firestore foi criado no projeto indicado em `firebase-config.js`.
-- **Módulos não carregam**: acesse o app por um servidor HTTP/HTTPS, não por `file://`.
+- **`auth/unauthorized-domain`**: adicione o domínio publicado à lista de domínios autorizados.
+- **Erro de `FIREBASE_SERVICE_ACCOUNT`**: confira se o JSON completo está configurado como segredo e corresponde ao mesmo projeto do app.
+- **IA informa que falta configuração**: adicione `GEMINI_API_KEY` e `FIREBASE_SERVICE_ACCOUNT` nas variáveis do serviço Render e faça um novo deploy.
+- **Falha ao carregar ou salvar tarefas**: confira as regras de `firestore.rules` e se o Firestore está ativo no projeto indicado em `firebase-config.js`.

@@ -291,6 +291,18 @@ header {
 }
 .btn-breakdown:hover:not(:disabled) { background: rgba(191, 112, 237, .16); }
 .btn-breakdown:disabled { opacity: .65; cursor: wait; }
+.btn-share {
+  justify-self: start;
+  padding: 5px 9px;
+  border: 1px solid rgba(76, 222, 194, .24);
+  border-radius: 8px;
+  background: rgba(76, 222, 194, .07);
+  color: var(--aqua);
+  font-size: .72rem;
+  font-weight: 650;
+}
+.btn-share:hover { background: rgba(76, 222, 194, .14); }
+.task-share-feedback { color: var(--muted); font-size: .73rem; }
 .task-ai-error { color: var(--danger); font-size: .73rem; }
 .subtask-list { display: grid; gap: 7px; padding: 0; list-style: none; }
 .subtask-list li { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: .77rem; }

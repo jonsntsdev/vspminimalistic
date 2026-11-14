@@ -1,21 +1,3 @@
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import {
-  createUserWithEmailAndPassword,
-  getAuth,
-  onAuthStateChanged,
-  sendPasswordResetEmail,
-  signInWithEmailAndPassword,
-  signOut
-} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import {
-  doc,
-  getFirestore,
-  onSnapshot,
-  runTransaction,
-  updateDoc
-} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { firebaseConfig } from './firebase-config.js';
-
 const COLUMNS = ['todo', 'doing', 'done'];
 const LABELS = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
 const EMPTY = {
@@ -25,9 +7,6 @@ const EMPTY = {
 };
 const TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/></svg>';
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
 const $ = (selector, root = document) => root.querySelector(selector);
 const loginScreen = $('#loginScreen');
 const loginForm = $('#loginForm');
@@ -52,24 +31,10 @@ let assistantBusy = false;
 let assistantGeneration = 0;
 let assistantUserId = null;
 const subtaskErrors = new Map();
-let boardRef = null;
-let unsubscribeBoard = null;
 let pendingWrites = 0;
 let writeQueue = Promise.resolve();
 let boardGeneration = 0;
-
-function authErrorMessage(error) {
-  const messages = {
-    'auth/email-already-in-use': 'Este e-mail já possui uma conta. Entre com sua senha.',
-    'auth/invalid-email': 'Informe um endereço de e-mail válido.',
-    'auth/invalid-credential': 'E-mail ou senha incorretos.',
-    'auth/weak-password': 'Escolha uma senha com pelo menos 8 caracteres.',
-    'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco e tente novamente.',
-    'auth/network-request-failed': 'Sem conexão com o Firebase. Verifique a internet e tente novamente.',
-    'auth/operation-not-allowed': 'O login por e-mail e senha não está ativado no Firebase.'
-  };
-  return messages[error.code] || `Não foi possível concluir a solicitação: ${error.message}`;
-}
+let boardPollTimer = null;
 
 function setLoginMessage(message, isError = true) {
   loginMessage.textContent = message;
@@ -86,7 +51,6 @@ function setAuthMode(mode) {
     : 'Entre para acessar seu quadro.';
   $('#authSubmit').textContent = creating ? 'Criar conta' : 'Entrar';
   $('#authModeToggle').textContent = creating ? 'Já tenho uma conta' : 'Criar uma conta';
-  $('#resetPassword').hidden = creating;
   passwordInput.autocomplete = creating ? 'new-password' : 'current-password';
   setLoginMessage('');
 }
@@ -97,29 +61,7 @@ function setSyncStatus(message, isError = false) {
 }
 
 function showBoardError(error) {
-  const message = String(error.message || '');
-  const normalized = message.toLowerCase();
-  const firestoreApiDisabled = normalized.includes('firestore.googleapis.com') &&
-    (normalized.includes('not been used') || normalized.includes('disabled'));
-
-  if (firestoreApiDisabled) {
-    const disabledMessage =
-      `A API do Cloud Firestore está desativada no projeto ${firebaseConfig.projectId}. ` +
-      'Ative-a no Google Cloud Console e aguarde alguns minutos.';
-    setSyncStatus(disabledMessage, true);
-    const link = document.createElement('a');
-    link.href = `https://console.cloud.google.com/apis/api/firestore.googleapis.com/overview?project=${encodeURIComponent(firebaseConfig.projectId)}`;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.textContent = 'Abrir configuração da API';
-    syncStatus.append(document.createElement('br'), link);
-    return;
-  }
-  if (error.code === 'permission-denied') {
-    setSyncStatus('Sem permissão para acessar o quadro. Confira se as regras do Firestore foram publicadas.', true);
-    return;
-  }
-  setSyncStatus(`Não foi possível abrir o quadro: ${message}`, true);
+  setSyncStatus(`Não foi possível abrir o quadro: ${error.message}`, true);
 }
 
 function setAuthenticatedView(user) {
@@ -131,9 +73,8 @@ function setAuthenticatedView(user) {
 
 function stopBoardListener() {
   boardGeneration += 1;
-  if (unsubscribeBoard) unsubscribeBoard();
-  unsubscribeBoard = null;
-  boardRef = null;
+  if (boardPollTimer) clearInterval(boardPollTimer);
+  boardPollTimer = null;
   tasks = [];
   breakingTaskId = null;
   subtaskErrors.clear();
@@ -159,59 +100,52 @@ function isTask(task) {
     ));
 }
 
-async function openBoard(user) {
+async function openBoard() {
   stopBoardListener();
   const generation = boardGeneration;
-  boardRef = doc(db, 'boards', user.uid);
   setSyncStatus('Conectando ao quadro…');
-
-  await runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(boardRef);
-    if (!snapshot.exists()) {
-      transaction.set(boardRef, {
-        name: 'Meu quadro',
-        ownerId: user.uid,
-        tasks: [],
-        columns: COLUMNS.map(id => ({ id, name: LABELS[id] })),
-        wipLimits: {}
-      });
-    }
-  });
-
+  const result = await apiRequest('/api/board');
   if (generation !== boardGeneration) return;
-  unsubscribeBoard = onSnapshot(boardRef, snapshot => {
-    if (generation !== boardGeneration) return;
-    if (!snapshot.exists()) {
-      setSyncStatus('O quadro não foi encontrado. Saia e entre novamente.', true);
-      return;
+  if (!Array.isArray(result.tasks) || !result.tasks.every(isTask)) {
+    throw new Error('Os dados do quadro estão em um formato inválido.');
+  }
+  tasks = result.tasks;
+  render();
+  setSyncStatus('Sincronizado');
+  boardPollTimer = setInterval(() => refreshBoard(generation), 8000);
+}
+
+async function refreshBoard(generation) {
+  if (generation !== boardGeneration || pendingWrites > 0) return;
+  try {
+    const result = await apiRequest('/api/board');
+    if (generation !== boardGeneration || pendingWrites > 0) return;
+    if (!Array.isArray(result.tasks) || !result.tasks.every(isTask)) {
+      throw new Error('Os dados do quadro estão em um formato inválido.');
     }
-    const remoteTasks = snapshot.data().tasks;
-    if (!Array.isArray(remoteTasks) || !remoteTasks.every(isTask)) {
-      setSyncStatus('Os dados do quadro estão em um formato inválido.', true);
-      return;
+    if (JSON.stringify(result.tasks) !== JSON.stringify(tasks)) {
+      tasks = result.tasks;
+      render();
     }
-    if (pendingWrites > 0) return;
-    tasks = remoteTasks;
-    render();
     setSyncStatus('Sincronizado');
-  }, error => {
-    if (generation !== boardGeneration) return;
-    showBoardError(error);
-  });
+  } catch (error) {
+    if (generation === boardGeneration) {
+      setSyncStatus(`Não foi possível sincronizar: ${error.message}`, true);
+    }
+  }
 }
 
 function persistTasks() {
-  if (!boardRef) {
+  if (!assistantUserId) {
     setSyncStatus('Não há uma conta conectada para salvar as tarefas.', true);
     return;
   }
-  const targetRef = boardRef;
   const generation = boardGeneration;
   const savedTasks = tasks.map(task => ({ ...task }));
   pendingWrites += 1;
   setSyncStatus('Salvando…');
   writeQueue = writeQueue
-    .then(() => updateDoc(targetRef, { tasks: savedTasks }))
+    .then(() => apiRequest('/api/board', { method: 'PUT', body: { tasks: savedTasks } }))
     .then(() => {
       if (generation !== boardGeneration) return;
       pendingWrites -= 1;
@@ -231,14 +165,14 @@ loginForm.addEventListener('submit', async event => {
   const email = $('#emailInput').value.trim().toLowerCase();
   const password = passwordInput.value;
   try {
-    if (authMode === 'create') {
-      await createUserWithEmailAndPassword(auth, email, password);
-    } else {
-      await signInWithEmailAndPassword(auth, email, password);
-    }
+    const data = await apiRequest(
+      authMode === 'create' ? '/api/auth/register' : '/api/auth/login',
+      { method: 'POST', body: { email, password } }
+    );
     setLoginMessage('');
+    await setAuthenticatedUser(data.user);
   } catch (error) {
-    setLoginMessage(authErrorMessage(error));
+    setLoginMessage(error.message);
   }
 });
 
@@ -246,30 +180,16 @@ $('#authModeToggle').addEventListener('click', () => {
   setAuthMode(authMode === 'login' ? 'create' : 'login');
 });
 
-$('#resetPassword').addEventListener('click', async () => {
-  const email = $('#emailInput').value.trim().toLowerCase();
-  if (!email) {
-    setLoginMessage('Informe seu e-mail para receber o link de redefinição.');
-    $('#emailInput').focus();
-    return;
-  }
-  try {
-    await sendPasswordResetEmail(auth, email);
-    setLoginMessage('Se esse e-mail tiver uma conta, você receberá um link para redefinir a senha.', false);
-  } catch (error) {
-    setLoginMessage(authErrorMessage(error));
-  }
-});
-
 $('#logoutBtn').addEventListener('click', async () => {
   try {
-    await signOut(auth);
+    await apiRequest('/api/auth/logout', { method: 'POST' });
+    await setAuthenticatedUser(null);
   } catch (error) {
     setSyncStatus(`Não foi possível sair: ${error.message}`, true);
   }
 });
 
-onAuthStateChanged(auth, user => {
+async function setAuthenticatedUser(user) {
   if (!user) {
     assistantUserId = null;
     resetAssistant();
@@ -277,17 +197,27 @@ onAuthStateChanged(auth, user => {
     setAuthenticatedView(null);
     return;
   }
-  if (assistantUserId !== user.uid) {
-    assistantUserId = user.uid;
+  if (assistantUserId !== user.id) {
+    assistantUserId = user.id;
     resetAssistant();
   }
   setAuthenticatedView(user);
-  openBoard(user).catch(error => {
+  await openBoard().catch(error => {
     showBoardError(error);
   });
-}, error => {
-  setLoginMessage(`Não foi possível verificar sua sessão: ${error.message}`);
-});
+}
+
+async function restoreSession() {
+  try {
+    const result = await apiRequest('/api/auth/me');
+    await setAuthenticatedUser(result.user);
+  } catch (error) {
+    setLoginMessage(`Não foi possível verificar sua sessão: ${error.message}`);
+    setAuthenticatedView(null);
+  }
+}
+
+restoreSession();
 
 function render() {
   COLUMNS.forEach(status => {
@@ -357,6 +287,17 @@ function cardEl(task) {
   splitButton.setAttribute('aria-label', `Gerar checklist para a tarefa: ${task.title}`);
   splitButton.addEventListener('click', () => breakTaskIntoSubtasks(task.id));
   taskTools.append(splitButton);
+  const shareButton = document.createElement('button');
+  shareButton.type = 'button';
+  shareButton.className = 'btn-share';
+  shareButton.textContent = 'Compartilhar';
+  shareButton.setAttribute('aria-label', `Compartilhar a tarefa: ${task.title}`);
+  const shareFeedback = document.createElement('p');
+  shareFeedback.className = 'task-share-feedback';
+  shareFeedback.setAttribute('role', 'status');
+  shareFeedback.hidden = true;
+  shareButton.addEventListener('click', () => shareTask(task.id, shareFeedback));
+  taskTools.append(shareButton, shareFeedback);
   if (subtaskErrors.has(task.id)) {
     const error = document.createElement('p');
     error.className = 'task-ai-error';
@@ -418,30 +359,89 @@ function cardEl(task) {
   return element;
 }
 
+async function shareTask(taskId, feedback) {
+  const task = tasks.find(item => item.id === taskId);
+  if (!task) return;
+  const text = [task.title, task.desc].filter(Boolean).join('\n\n');
+  feedback.hidden = true;
+
+  try {
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: task.title, text });
+        feedback.textContent = 'Pronto para compartilhar.';
+        feedback.hidden = false;
+        return;
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+      }
+    }
+
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+      throw new Error('Este navegador não oferece compartilhamento nem acesso à área de transferência.');
+    }
+    await navigator.clipboard.writeText(text);
+    feedback.textContent = 'Texto copiado. Agora é só colar onde quiser.';
+    feedback.hidden = false;
+  } catch (error) {
+    feedback.textContent = `Não foi possível compartilhar: ${error.message}`;
+    feedback.hidden = false;
+  }
+}
+
 function uid() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function postAIRequest(path, payload) {
-  const user = auth.currentUser;
-  if (!user) throw new Error('Entre na sua conta para usar o assistente.');
-  const token = await user.getIdToken();
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify(payload)
-  });
+async function apiRequest(path, { method = 'GET', body } = {}) {
+  const options = {
+    method,
+    credentials: 'same-origin',
+    headers: {}
+  };
+  if (body !== undefined) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(body);
+  }
+  const response = await fetch(path, options);
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    const error = new Error(
+      'Este endereço não está conectado ao Web Service. Abra a URL vspminimalist-web no Render (não a do Static Site) e tente novamente.'
+    );
+    error.status = response.status;
+    throw error;
+  }
   let data;
   try {
     data = await response.json();
   } catch {
-    throw new Error('O servidor do assistente retornou uma resposta inválida.');
+    const error = new Error(
+      `O servidor da IA enviou uma resposta inválida (HTTP ${response.status}). Tente novamente ou confira os logs do Web Service no Render.`
+    );
+    error.status = response.status;
+    throw error;
   }
-  if (!response.ok) throw new Error(data.error || `Falha no assistente (HTTP ${response.status}).`);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    const error = new Error(
+      `O servidor da IA enviou uma resposta em formato inesperado (HTTP ${response.status}). Confira os logs do Web Service no Render.`
+    );
+    error.status = response.status;
+    throw error;
+  }
+  if (!response.ok) {
+    const message = typeof data.error === 'string'
+      ? data.error
+      : `Falha no assistente (HTTP ${response.status}).`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
   return data;
+}
+
+function postAIRequest(path, payload) {
+  return apiRequest(path, { method: 'POST', body: payload });
 }
 
 function appendChatMessage(text, role) {

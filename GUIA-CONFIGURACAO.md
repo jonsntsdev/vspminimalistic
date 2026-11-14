@@ -1,66 +1,52 @@
 # vspminimalist: configuração e publicação
 
-O app usa Firebase Authentication e Cloud Firestore. O chat e a criação de checklists com IA passam pelo backend deste projeto; a chave do Gemini fica somente no ambiente do servidor, nunca no navegador.
+O app usa o Web Service do Render para autenticação, API e interface. As contas e tarefas ficam em um PostgreSQL persistente do Render. O Firebase não é mais usado.
 
-## Preparar o Firebase
+## Conectar o PostgreSQL do Render
 
-1. No [Firebase Console](https://console.firebase.google.com/), crie um projeto ou use um projeto existente.
-2. Em **Authentication > Método de login**, ative **E-mail/senha**.
-3. Em **Firestore Database**, crie o banco em **modo de produção**.
-4. Confira se `firebase-config.js` contém os dados do app Web. Essa configuração identifica o projeto; não coloque nela chaves privadas ou senhas.
-5. Em **Firestore Database > Regras**, publique o conteúdo de `firestore.rules`.
-6. Em **Authentication > Configurações > Domínios autorizados**, adicione o domínio em que o app será publicado.
+1. No Render, crie um banco **PostgreSQL persistente** na mesma região do Web Service (`Oregon`). Bancos persistentes podem ter cobrança; confira o plano e o valor antes de confirmar.
+2. No serviço `vspminimalist-web`, abra **Environment** e configure `DATABASE_URL` com a **Internal Database URL** do PostgreSQL.
+3. Sincronize o Blueprint para gerar `SESSION_SECRET`; `SESSION_COOKIE_SECURE` e `GEMINI_MODEL` já têm valores no `render.yaml`.
+4. Salve as variáveis e aguarde o deploy. O app cria as tabelas `app_users` e `boards` automaticamente na primeira chamada autenticada.
 
-O app cria um documento em `boards/{uid}` no primeiro acesso autenticado. O backend valida o token do Firebase e consulta somente o quadro associado ao usuário autenticado.
+Não use armazenamento local do serviço para guardar tarefas: o disco do Web Service pode ser temporário. A conexão deve usar a URL interna do banco Render.
 
 ## Configurar a IA
 
-Crie uma chave do Gemini no Google AI Studio. No ambiente do servidor, configure:
+Para ativar o chat e a criação de subtarefas, configure `GEMINI_API_KEY` como segredo em **Environment** no Web Service. A chave fica somente no servidor. Sem ela, login e quadro continuam disponíveis, mas as rotas de IA informam que falta configuração.
 
-- `GEMINI_API_KEY`: chave do Gemini, mantida como segredo.
-- `FIREBASE_SERVICE_ACCOUNT`: conteúdo JSON de uma conta de serviço do projeto Firebase, mantido como segredo.
-- `GEMINI_MODEL`: opcional; o padrão é `gemini-2.5-flash`.
+## Publicar
 
-O chat envia ao Gemini apenas título, descrição, status e checklist das tarefas do quadro autenticado. Não envie essas chaves pelo chat, não as coloque em `firebase-config.js` e não as versione no Git.
+O Web Service `vspminimalist-web` já está conectado ao repositório. Depois de enviar os arquivos atualizados para a branch `main`, o Render fará o deploy. Use `https://vspminimalist-web.onrender.com`, não o Static Site antigo.
+
+O health check é `/api/health`. Para uma criação manual, use runtime Python, Build Command `pip install -r requirements.txt` e Start Command `gunicorn server:app --workers 1 --threads 4 --timeout 40`.
 
 ## Testar localmente
 
-Instale Python 3.10 ou superior e execute:
+Instale Python 3.10 ou superior, configure `DATABASE_URL` para um PostgreSQL de desenvolvimento e `SESSION_SECRET`, e execute:
 
 ```text
 pip install -r requirements.txt
 python server.py
 ```
 
-Abra `http://localhost:5000`. Para testar o chat localmente, configure as mesmas variáveis de ambiente do servidor antes de iniciar o app. Sem as credenciais de backend, a interface e o quadro continuam disponíveis, mas as rotas de IA informam que falta configuração.
+O servidor não persiste usuários ou tarefas sem `DATABASE_URL`; não há fallback silencioso para armazenamento local.
 
-## Publicar no Render
+## Contas e dados
 
-Publique como **Web Service**, não como Static Site:
+Este app agora cria contas novas no PostgreSQL. Contas, senhas e tarefas do Firebase antigo não são copiadas. Cada usuário precisa se cadastrar novamente; a redefinição de senha por e-mail ainda não está configurada.
 
-O repositório inclui `render.yaml`. No painel Render, use **New > Blueprint**, conecte o mesmo repositório e aplique o Blueprint. Ele cria um novo Web Service chamado `vspminimalist-web`. Mantenha o Static Site atual até confirmar que o novo serviço está funcionando; não tente executar o backend como Static Site.
+## Recursos do Kanban
 
-Se criar o serviço manualmente, selecione runtime **Python**, Build Command `pip install -r requirements.txt` e Start Command `gunicorn server:app --workers 1 --threads 4 --timeout 40`.
-
-Depois do deploy:
-
-1. Em **Environment**, adicione `FIREBASE_SERVICE_ACCOUNT` como segredo. Adicione `GEMINI_API_KEY` quando tiver uma chave do Gemini. `GEMINI_MODEL` é opcional.
-2. Adicione o novo domínio `onrender.com` aos domínios autorizados no Firebase Authentication.
-3. Use `/api/health` como health check, se desejar.
-
-Para criar `FIREBASE_SERVICE_ACCOUNT`, gere uma chave de conta de serviço no projeto Firebase/Google Cloud e cole o JSON diretamente no campo secreto do Render. Não salve esse arquivo no repositório. Restrinja a conta às permissões de Firestore necessárias para ler os quadros.
-
-## Recursos do Kanban com IA
-
-- **Pergunte ao seu projeto**: consulta as tarefas reais do quadro e responde sem inventar informações ausentes.
-- **Quebrar em subtarefas**: o botão em cada card gera um checklist editável, salvo junto com a tarefa no Firestore.
-- As rotas de IA exigem um token válido do Firebase e limitam o volume de perguntas por usuário.
+- **Pergunte ao seu projeto**: consulta as tarefas da conta autenticada e responde sem inventar informações ausentes.
+- **Quebrar em subtarefas**: gera um checklist que é salvo com a tarefa.
+- **Compartilhar tarefa**: abre o menu nativo do dispositivo ou copia título e descrição. Isso não cria um link público nem concede acesso ao quadro.
+- As rotas de autenticação limitam tentativas por IP; as rotas de IA limitam solicitações por usuário.
 
 ## Solução de problemas
 
-- **`auth/operation-not-allowed`**: ative o provedor E-mail/senha no Firebase Authentication.
-- **`auth/unauthorized-domain`**: adicione o domínio publicado à lista de domínios autorizados.
-- **`Cloud Firestore API has not been used` ou API desativada**: abra [a página da API Firestore do projeto](https://console.cloud.google.com/apis/api/firestore.googleapis.com/overview?project=meu-quadro-kanban-c340c) e clique em **Ativar**. Confirme também que o banco foi criado em **Firestore Database** no Firebase Console; aguarde alguns minutos e recarregue o app. A hospedagem no Render não ativa APIs do projeto Google Cloud.
-- **Erro de `FIREBASE_SERVICE_ACCOUNT`**: confira se o JSON completo está configurado como segredo e corresponde ao mesmo projeto do app.
-- **IA informa que falta configuração**: adicione `GEMINI_API_KEY` e `FIREBASE_SERVICE_ACCOUNT` nas variáveis do serviço Render e faça um novo deploy.
-- **Falha ao carregar ou salvar tarefas**: confira as regras de `firestore.rules` e se o Firestore está ativo no projeto indicado em `firebase-config.js`.
+- **`Configure DATABASE_URL`**: crie um PostgreSQL persistente no Render e use a Internal Database URL no Web Service.
+- **Erro de conexão ao banco**: confirme que o PostgreSQL e o Web Service estão na mesma região e que `DATABASE_URL` é a URL interna correta.
+- **Sessão inválida após deploy**: confirme que `SESSION_SECRET` está definido no Render e não foi alterado entre deploys.
+- **IA informa que falta configuração**: adicione `GEMINI_API_KEY` em Environment no Render.
+- **A tela ainda fala de Firestore ou Firebase**: abra `https://vspminimalist-web.onrender.com` após o deploy da versão migrada; o Static Site antigo ainda pode servir o código anterior.

@@ -23,14 +23,13 @@
         </label>
         <div class="field">
           <label for="passwordInput">Senha</label>
-          <input type="password" id="passwordInput" autocomplete="current-password" minlength="8" required placeholder="Pelo menos 8 caracteres">
+          <input type="password" id="passwordInput" autocomplete="current-password" minlength="8" maxlength="128" required placeholder="Pelo menos 8 caracteres">
         </div>
         <p class="login-message" id="loginMessage" role="status" aria-live="polite" hidden></p>
         <button class="btn-primary login-submit" id="authSubmit" type="submit">Entrar</button>
       </form>
       <div class="login-links">
         <button class="text-button" id="authModeToggle" type="button">Criar uma conta</button>
-        <button class="text-button" id="resetPassword" type="button">Esqueci minha senha</button>
       </div>
       <p class="login-footnote">Suas tarefas ficam salvas com segurança na sua conta.</p>
     </div>

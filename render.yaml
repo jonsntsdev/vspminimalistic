@@ -6,3 +6,14 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn server:app --workers 1 --threads 4 --timeout 40
     healthCheckPath: /api/health
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash

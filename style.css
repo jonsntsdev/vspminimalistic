@@ -25,6 +25,7 @@ html, body { min-height: 100%; }
 [hidden] { display: none !important; }
 body {
   min-height: 100vh;
+  min-height: 100svh;
   display: flex;
   flex-direction: column;
   background:
@@ -37,6 +38,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
   overflow-x: hidden;
+  overscroll-behavior-y: none;
 }
 body::before,
 body::after {
@@ -411,6 +413,8 @@ header {
 
 dialog {
   width: min(460px, calc(100% - 32px));
+  max-height: 90vh;
+  max-height: 90svh;
   margin: auto;
   padding: 0;
   border: 1px solid var(--line);
@@ -419,7 +423,11 @@ dialog {
   color: var(--ink);
   box-shadow: var(--shadow-lift);
 }
-dialog::backdrop { background: rgba(3, 7, 15, .78); backdrop-filter: blur(5px); }
+dialog::backdrop {
+  background: rgba(3, 7, 15, .78);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+}
 dialog[open] { animation: appear .16s ease-out; }
 @keyframes appear { from { opacity: 0; transform: translateY(8px) scale(.985); } }
 .modal-body { display: grid; gap: 18px; padding: 25px; }
@@ -503,6 +511,21 @@ textarea { min-height: 94px; resize: vertical; }
   .workspace { max-width: 680px; }
 }
 @media (max-width: 600px) {
+  html, body {
+    height: 100%;
+  }
+  body {
+    min-height: 100svh;
+  }
+  .login-screen {
+    min-height: 100svh;
+    align-items: center;
+    overflow-y: auto;
+  }
+  .login-card {
+    max-height: calc(100svh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow-y: auto;
+  }
   header {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -550,7 +573,11 @@ textarea { min-height: 94px; resize: vertical; }
     max-height: calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     overflow-y: auto;
   }
-  input, textarea { font-size: 16px; }
+  input, textarea {
+    font-size: 16px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
   .share-member .btn-ghost { min-height: 44px; }
 }
 @media (max-width: 400px) {

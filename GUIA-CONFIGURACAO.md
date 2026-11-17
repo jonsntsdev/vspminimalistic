@@ -1,52 +1,61 @@
-# vspminimalist: configuração e publicação
+# vspminimalist: execução e publicação
 
-O app usa o Web Service do Render para autenticação, API e interface. As contas e tarefas ficam em um PostgreSQL persistente do Render. O Firebase não é mais usado.
+O app usa Express, autenticação própria e um banco relacional. Para desenvolvimento local, os dados ficam em SQLite. No Render, configure um PostgreSQL para que os quadros continuem salvos após reinicializações e possam ser compartilhados entre usuários.
 
-## Conectar o PostgreSQL do Render
+## Executar localmente
 
-1. No Render, crie um banco **PostgreSQL persistente** na mesma região do Web Service (`Oregon`). Bancos persistentes podem ter cobrança; confira o plano e o valor antes de confirmar.
-2. No serviço `vspminimalist-web`, abra **Environment** e configure `DATABASE_URL` com a **Internal Database URL** do PostgreSQL.
-3. Sincronize o Blueprint para gerar `SESSION_SECRET`; `SESSION_COOKIE_SECURE` e `GEMINI_MODEL` já têm valores no `render.yaml`.
-4. Salve as variáveis e aguarde o deploy. O app cria as tabelas `app_users` e `boards` automaticamente na primeira chamada autenticada.
+Requisitos: Node.js 22.5 ou superior.
 
-Não use armazenamento local do serviço para guardar tarefas: o disco do Web Service pode ser temporário. A conexão deve usar a URL interna do banco Render.
-
-## Configurar a IA
-
-Para ativar o chat e a criação de subtarefas, configure `GEMINI_API_KEY` como segredo em **Environment** no Web Service. A chave fica somente no servidor. Sem ela, login e quadro continuam disponíveis, mas as rotas de IA informam que falta configuração.
-
-## Publicar
-
-O Web Service `vspminimalist-web` já está conectado ao repositório. Depois de enviar os arquivos atualizados para a branch `main`, o Render fará o deploy. Use `https://vspminimalist-web.onrender.com`, não o Static Site antigo.
-
-O health check é `/api/health`. Para uma criação manual, use runtime Python, Build Command `pip install -r requirements.txt` e Start Command `gunicorn server:app --workers 1 --threads 4 --timeout 40`.
-
-## Testar localmente
-
-Instale Python 3.10 ou superior, configure `DATABASE_URL` para um PostgreSQL de desenvolvimento e `SESSION_SECRET`, e execute:
-
-```text
-pip install -r requirements.txt
-python server.py
+```powershell
+npm install
+npm start
 ```
 
-O servidor não persiste usuários ou tarefas sem `DATABASE_URL`; não há fallback silencioso para armazenamento local.
+Abra `http://localhost:3000` e crie uma conta com senha de pelo menos 8 caracteres. O SQLite é criado automaticamente em `data/edgekanban.sqlite`; essa pasta é ignorada pelo Git.
 
-## Contas e dados
+Para habilitar o chat e a criação de checklist por IA, configure a chave somente no servidor:
 
-Este app agora cria contas novas no PostgreSQL. Contas, senhas e tarefas do Firebase antigo não são copiadas. Cada usuário precisa se cadastrar novamente; a redefinição de senha por e-mail ainda não está configurada.
+```powershell
+$env:AI_PROVIDER = "gemini"
+$env:AI_API_KEY = "sua-chave"
+npm start
+```
 
-## Recursos do Kanban
+O Gemini seleciona automaticamente o modelo Flash compatível mais recente disponível para a chave configurada, com cache em memória, novas tentativas para sobrecarga e fallback para outro modelo compatível. Também é possível usar `AI_PROVIDER=openai` e, opcionalmente, `AI_MODEL=gpt-4o-mini`. A interface nunca recebe a chave da IA. Sem uma chave válida, os recursos de IA informam que estão indisponíveis; quadros e tarefas continuam funcionando.
 
-- **Pergunte ao seu projeto**: consulta as tarefas da conta autenticada e responde sem inventar informações ausentes.
-- **Quebrar em subtarefas**: gera um checklist que é salvo com a tarefa.
-- **Compartilhar tarefa**: abre o menu nativo do dispositivo ou copia título e descrição. Isso não cria um link público nem concede acesso ao quadro.
-- As rotas de autenticação limitam tentativas por IP; as rotas de IA limitam solicitações por usuário.
+## Publicar no Render
 
-## Solução de problemas
+1. Conecte o repositório ao Render usando o blueprint `render.yaml` ou crie um **Web Service** com `npm ci` no build e `npm start` no start.
+2. O blueprint configura o plano gratuito e usa SQLite. O sistema de arquivos do Web Service gratuito é temporário; dados podem ser perdidos em reinicializações ou novos deploys.
+3. Para manter os dados, configure um banco PostgreSQL e `DATABASE_URL` com a URL interna fornecida pelo Render.
+4. Configure `APP_URL` com a URL pública do app, por exemplo `https://vspminimalist-web.onrender.com`.
+5. Para os recursos de IA, cadastre `AI_PROVIDER` e `AI_API_KEY` nas variáveis do serviço. `AI_MODEL` é opcional somente para OpenAI; o Gemini descobre o modelo compatível automaticamente.
+6. Faça um deploy e confira `https://seu-dominio/healthz`.
 
-- **`Configure DATABASE_URL`**: crie um PostgreSQL persistente no Render e use a Internal Database URL no Web Service.
-- **Erro de conexão ao banco**: confirme que o PostgreSQL e o Web Service estão na mesma região e que `DATABASE_URL` é a URL interna correta.
-- **Sessão inválida após deploy**: confirme que `SESSION_SECRET` está definido no Render e não foi alterado entre deploys.
-- **IA informa que falta configuração**: adicione `GEMINI_API_KEY` em Environment no Render.
-- **A tela ainda fala de Firestore ou Firebase**: abra `https://vspminimalist-web.onrender.com` após o deploy da versão migrada; o Static Site antigo ainda pode servir o código anterior.
+O app usa SQLite se `DATABASE_URL` não estiver definido. O disco do Web Service pode ser temporário; para preservar os dados em produção, configure PostgreSQL no Render. O servidor cria as tabelas necessárias na inicialização.
+
+## Contas, quadros e convites
+
+- Cada cadastro cria uma conta e um quadro próprio.
+- O dono pode compartilhar por e-mail como editor ou leitor, alterar o papel de membros e remover o acesso.
+- Se a pessoa já tem conta, o acesso é concedido ao e-mail informado. Se ainda não tem conta, o app gera um link de uso único válido por 7 dias; copie e envie o link. Para aceitar, a pessoa deve criar uma conta usando exatamente esse endereço.
+- Editores podem criar e alterar tarefas e configurações do quadro. Leitores podem visualizar, mas o servidor também bloqueia as operações de edição.
+- Tarefas abrem em `/tasks/:id`; o link funciona para membros autenticados do quadro.
+
+## Recursos implementados
+
+- Quadros próprios e compartilhados, papéis OWNER/EDITOR/VIEWER e proteção das rotas de escrita.
+- Kanban com colunas personalizáveis, limite WIP validado pelo servidor, prioridade, labels e histórico.
+- Página de tarefa com prazo, responsável do quadro, comentários com autor/data, checklist, story points, sprint, critérios de aceite e Definition of Done.
+- Backlog e sprints Scrum; tarefas podem ser movidas entre backlog e sprints.
+- Chat de IA que consulta apenas tarefas do quadro autorizado e geração de checklist por IA. As chaves e chamadas aos provedores ficam no backend.
+- Tarefas com “Bug” no título ou descrição recebem automaticamente a label Bug e prioridade alta.
+
+## Verificação rápida
+
+1. Crie contas com dois e-mails diferentes.
+2. No primeiro quadro, gere um convite de editor para o segundo e-mail; abra o link em outra sessão e aceite.
+3. Confirme que ambos veem as alterações e que o dono consegue trocar o segundo usuário para leitor.
+4. Como leitor, tente criar, mover ou editar uma tarefa: a interface deve bloquear a edição e o servidor deve responder com `403`.
+5. Abra uma tarefa em nova aba, adicione comentário, responsável, prazo e checklist; confirme que as mudanças aparecem no quadro e na página.
+6. Configure a IA no Render e teste uma pergunta sobre tarefas e a geração de checklist.

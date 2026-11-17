@@ -22,6 +22,7 @@ const chatForm = $('#chatForm');
 const chatInput = $('#chatInput');
 const chatMessages = $('#chatMessages');
 const chatSubmit = $('#chatSubmit');
+const board = $('#board');
 const shareModal = $('#shareModal');
 const shareForm = $('#shareForm');
 const shareEmail = $('#shareEmail');
@@ -35,6 +36,26 @@ let draggedId = null;
 let writeQueue = Promise.resolve();
 let currentUser = null;
 let boardOwnerId = null;
+
+if (board && window.matchMedia('(hover: hover) and (pointer: fine)').matches &&
+    !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  let boardFrame = null;
+  board.addEventListener('pointermove', event => {
+    if (boardFrame) cancelAnimationFrame(boardFrame);
+    boardFrame = requestAnimationFrame(() => {
+      const rect = board.getBoundingClientRect();
+      const x = (event.clientX - rect.left) / rect.width - 0.5;
+      const y = (event.clientY - rect.top) / rect.height - 0.5;
+      board.classList.add('is-hovered');
+      board.style.transform = `rotateX(${-y * 2.8}deg) rotateY(${x * 3.8}deg) translateY(-3px)`;
+    });
+  });
+  board.addEventListener('pointerleave', () => {
+    if (boardFrame) cancelAnimationFrame(boardFrame);
+    board.classList.remove('is-hovered');
+    board.style.transform = 'rotateX(0deg) rotateY(0deg) translateY(0)';
+  });
+}
 
 function setLoginMessage(message, isError = true) {
   loginMessage.textContent = message;

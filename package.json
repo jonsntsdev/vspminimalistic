@@ -1,17 +1,17 @@
 {
-  "name": "vspminimalist",
+  "name": "edgekanbann",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22"
   },
   "scripts": {
-    "start": "node server.js",
-    "test": "node --test"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "pg": "^8.23.1"
+    "pg": "^8.16.3",
+    "bcryptjs": "^3.0.2"
   }
 }

@@ -1,11 +1,17 @@
 services:
   - type: web
-    name: vspminimalist-web
+    name: edgekanbann
     runtime: node
     plan: free
-    buildCommand: npm ci
+    buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /healthz
     envVars:
-      - key: NODE_VERSION
-        value: 22.5.0
+      - key: AI_PROVIDER
+        value: gemini
+      - key: DATABASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: AI_API_KEY
+        sync: false

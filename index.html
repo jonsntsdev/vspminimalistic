@@ -2,18 +2,19 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#070b16">
-  <meta name="description" content="kanban 1.4 — seu trabalho, em um quadro claro e organizado.">
-  <title>kanban 1.4 </title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1e2024">
+  <meta name="description" content="Aurora Midnight, — seu trabalho, em um quadro claro e organizado.">
+  <title>Aurora Midnight, </title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <section class="login-screen" id="loginScreen" aria-labelledby="loginTitle">
     <div class="login-card">
-      <a class="brand" href="index.html" aria-label="kanban 1.4">
+      <a class="brand" href="index.html" aria-label="Aurora Midnight">
         <span class="brand-mark" aria-hidden="true">k</span>
-        <span>kanban 1.4</span>
+        <span>Aurora Midnight,</span>
       </a>
       <h1 id="loginTitle">Seu espaço de trabalho.</h1>
       <p class="login-intro" id="authDescription">Entre para acessar seu quadro.</p>
@@ -37,15 +38,18 @@
 
   <header id="appHeader" hidden>
     <div class="header-brand">
-      <a class="brand" href="index.html" aria-label="edgekanbann">
-        <span class="brand-mark" aria-hidden="true">e</span>
-        <span>edgekanbann</span>
+      <a class="brand" href="index.html" aria-label="kanban 1.4">
+        <span class="brand-mark" aria-hidden="true">k</span>
+        <span>Aurora Midnight</span>
       </a>
       <p>Seu trabalho, sem ruído.</p>
     </div>
     <div class="account-actions">
       <span class="account-email" id="accountEmail"></span>
       <button class="btn-logout" id="logoutBtn" type="button">Sair</button>
+      <button class="btn-chat" id="openShare" type="button" aria-controls="shareModal" aria-expanded="false">
+        Compartilhar
+      </button>
       <button class="btn-chat" id="openChat" type="button" aria-controls="projectChat" aria-expanded="false">
         Pergunte ao seu projeto
       </button>
@@ -97,6 +101,24 @@
       <button class="btn-primary" id="chatSubmit" type="submit">Enviar</button>
     </form>
   </aside>
+
+  <dialog id="shareModal" aria-labelledby="shareTitle">
+    <form class="modal-body" id="shareForm">
+      <div>
+        <p class="eyebrow">COLABORAÇÃO</p>
+        <h2 id="shareTitle">Compartilhar quadro</h2>
+      </div>
+      <label for="shareEmail">E-mail da pessoa
+        <input type="email" id="shareEmail" maxlength="254" required placeholder="nome@exemplo.com">
+      </label>
+      <p class="share-message" id="shareMessage" role="status" aria-live="polite" hidden></p>
+      <div class="share-members" id="shareMembers"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="closeShare">Fechar</button>
+        <button type="submit" class="btn-primary">Compartilhar</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="modal" aria-labelledby="modalTitle">
     <form class="modal-body" id="taskForm">

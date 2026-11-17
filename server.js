@@ -85,15 +85,80 @@ app.get('/api/auth/me', async (request, response) => {
   return response.json({ user: { id: session.userId, email: session.email } });
 });
 
+app.get('/api/board/members', async (request, response) => {
+  const session = await sessionFromRequest(request);
+  if (!session) return response.status(401).json({ error: 'Entre na sua conta para compartilhar o quadro.' });
+  if (!pool) return response.status(503).json({ error: 'O banco de dados ainda não está configurado no servidor.' });
+
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.email
+       FROM board_members bm
+       JOIN users u ON u.id = bm.user_id
+       WHERE bm.board_owner_id = $1
+       ORDER BY u.email`,
+      [session.userId]
+    );
+    return response.json({ members: result.rows });
+  } catch (error) {
+    console.error('Falha ao listar participantes:', error.message);
+    return response.status(500).json({ error: 'Não foi possível listar os participantes.' });
+  }
+});
+
+app.post('/api/board/members', async (request, response) => {
+  const session = await sessionFromRequest(request);
+  if (!session) return response.status(401).json({ error: 'Entre na sua conta para compartilhar o quadro.' });
+  if (!pool) return response.status(503).json({ error: 'O banco de dados ainda não está configurado no servidor.' });
+
+  const { email } = normalizedCredentials({ email: request.body?.email, password: 'placeholder' });
+  if (!email) return response.status(400).json({ error: 'Informe um e-mail válido.' });
+  if (email === session.email) return response.status(400).json({ error: 'Você já é o proprietário deste quadro.' });
+
+  try {
+    const owner = await pool.query('SELECT owner_id FROM boards WHERE owner_id = $1', [session.userId]);
+    if (!owner.rows.length) return response.status(404).json({ error: 'Somente o proprietário pode compartilhar este quadro.' });
+    const member = await pool.query('SELECT id, email FROM users WHERE email = $1', [email]);
+    if (!member.rows.length) {
+      return response.status(404).json({ error: 'Esta pessoa ainda não possui uma conta no Edgekanbann.' });
+    }
+    await pool.query(
+      'INSERT INTO board_members (board_owner_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [session.userId, member.rows[0].id]
+    );
+    return response.json({ member: member.rows[0] });
+  } catch (error) {
+    console.error('Falha ao compartilhar quadro:', error.message);
+    return response.status(500).json({ error: 'Não foi possível compartilhar o quadro.' });
+  }
+});
+
+app.delete('/api/board/members/:userId', async (request, response) => {
+  const session = await sessionFromRequest(request);
+  if (!session) return response.status(401).json({ error: 'Entre na sua conta para alterar o compartilhamento.' });
+  if (!pool) return response.status(503).json({ error: 'O banco de dados ainda não está configurado no servidor.' });
+
+  try {
+    await pool.query(
+      'DELETE FROM board_members WHERE board_owner_id = $1 AND user_id = $2',
+      [session.userId, request.params.userId]
+    );
+    return response.json({ ok: true });
+  } catch (error) {
+    console.error('Falha ao remover participante:', error.message);
+    return response.status(500).json({ error: 'Não foi possível remover o participante.' });
+  }
+});
+
 app.get('/api/board', async (request, response) => {
   const session = await sessionFromRequest(request);
   if (!session) return response.status(401).json({ error: 'Entre na sua conta para acessar o quadro.' });
   if (!pool) return response.status(503).json({ error: 'O banco de dados ainda não está configurado no servidor.' });
 
   try {
-    const result = await pool.query('SELECT tasks FROM boards WHERE owner_id = $1', [session.userId]);
+    const result = await getAccessibleBoard(session.userId);
     if (!result.rows.length) return response.status(404).json({ error: 'Não encontramos um quadro associado à sua conta.' });
-    return response.json({ tasks: result.rows[0].tasks });
+    return response.json({ tasks: result.rows[0].tasks, ownerId: result.rows[0].owner_id });
   } catch (error) {
     console.error('Falha ao carregar o quadro:', error.message);
     return response.status(500).json({ error: 'Não foi possível carregar o quadro.' });
@@ -109,9 +174,11 @@ app.put('/api/board', async (request, response) => {
   }
 
   try {
+    const board = await getAccessibleBoard(session.userId);
+    if (!board.rows.length) return response.status(404).json({ error: 'Não encontramos um quadro associado à sua conta.' });
     const result = await pool.query(
       'UPDATE boards SET tasks = $2::jsonb, updated_at = NOW() WHERE owner_id = $1 RETURNING tasks',
-      [session.userId, JSON.stringify(request.body.tasks.slice(0, 100))]
+      [board.rows[0].owner_id, JSON.stringify(request.body.tasks.slice(0, 100))]
     );
     if (!result.rows.length) return response.status(404).json({ error: 'Não encontramos um quadro associado à sua conta.' });
     return response.json({ tasks: result.rows[0].tasks });
@@ -131,7 +198,7 @@ app.post('/api/ai/chat', async (request, response) => {
   if (!messages) return response.status(400).json({ error: 'Envie uma pergunta válida com até 10 mensagens recentes.' });
 
   try {
-    const board = await pool.query('SELECT tasks FROM boards WHERE owner_id = $1', [session.userId]);
+    const board = await getAccessibleBoard(session.userId);
     if (!board.rows.length) return response.status(404).json({ error: 'Não encontramos um quadro associado à sua conta.' });
     const tasks = board.rows[0].tasks.slice(0, 100).map(task => ({
       title: boundedText(task.title, 80),
@@ -146,7 +213,7 @@ app.post('/api/ai/chat', async (request, response) => {
   }
 });
 
-app.get(['/', '/index.html', '/style.css', '/script.js', '/404.html'], (request, response, next) => {
+app.get(['/', '/index.html', '/style.css', '/script.js', '/favicon.svg', '/404.html'], (request, response, next) => {
   const file = request.path === '/' ? 'index.html' : request.path.slice(1);
   response.sendFile(path.join(ROOT, file), error => {
     if (error) next(error);
@@ -190,7 +257,28 @@ async function initializeDatabase() {
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       expires_at TIMESTAMPTZ NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS board_members (
+      board_owner_id UUID NOT NULL REFERENCES boards(owner_id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (board_owner_id, user_id)
+    );
   `);
+}
+
+async function getAccessibleBoard(userId) {
+  if (!pool) return { rows: [] };
+  const ownBoard = await pool.query('SELECT owner_id, tasks FROM boards WHERE owner_id = $1', [userId]);
+  if (ownBoard.rows.length) return ownBoard;
+  return pool.query(
+    `SELECT b.owner_id, b.tasks
+     FROM board_members bm
+     JOIN boards b ON b.owner_id = bm.board_owner_id
+     WHERE bm.user_id = $1
+     ORDER BY bm.created_at
+     LIMIT 1`,
+    [userId]
+  );
 }
 
 function normalizedCredentials(body) {

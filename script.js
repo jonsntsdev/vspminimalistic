@@ -22,6 +22,11 @@ const chatForm = $('#chatForm');
 const chatInput = $('#chatInput');
 const chatMessages = $('#chatMessages');
 const chatSubmit = $('#chatSubmit');
+const shareModal = $('#shareModal');
+const shareForm = $('#shareForm');
+const shareEmail = $('#shareEmail');
+const shareMessage = $('#shareMessage');
+const shareMembers = $('#shareMembers');
 
 let authMode = 'login';
 let tasks = [];
@@ -29,6 +34,7 @@ let chatHistory = [];
 let draggedId = null;
 let writeQueue = Promise.resolve();
 let currentUser = null;
+let boardOwnerId = null;
 
 function setLoginMessage(message, isError = true) {
   loginMessage.textContent = message;
@@ -92,6 +98,7 @@ function resetChat() {
 
 function stopBoardListener() {
   tasks = [];
+  boardOwnerId = null;
   writeQueue = Promise.resolve();
 }
 
@@ -113,6 +120,7 @@ async function openBoard(user) {
     throw new Error('Os dados do quadro estão em um formato inválido.');
   }
   tasks = result.tasks;
+  boardOwnerId = result.ownerId;
   render();
   setSyncStatus('Sincronizado');
 }
@@ -179,6 +187,95 @@ $('#logoutBtn').addEventListener('click', async () => {
     setAuthenticatedView(null);
   } catch (error) {
     setSyncStatus(`Não foi possível sair: ${error.message}`, true);
+  }
+});
+
+function setShareMessage(message, isError = true) {
+  shareMessage.textContent = message;
+  shareMessage.hidden = !message;
+  shareMessage.classList.toggle('is-error', isError);
+}
+
+async function loadShareMembers() {
+  shareMembers.replaceChildren();
+  if (boardOwnerId !== currentUser?.id) {
+    setShareMessage('Somente o proprietário pode alterar o compartilhamento.', true);
+    return;
+  }
+  setShareMessage('');
+  const response = await fetch('/api/board/members', { credentials: 'same-origin' });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Não foi possível carregar os participantes.');
+  if (!result.members.length) {
+    const empty = document.createElement('p');
+    empty.className = 'share-empty';
+    empty.textContent = 'Nenhuma pessoa adicionada ainda.';
+    shareMembers.append(empty);
+    return;
+  }
+  result.members.forEach(member => {
+    const row = document.createElement('div');
+    row.className = 'share-member';
+    const email = document.createElement('span');
+    email.textContent = member.email;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn-ghost';
+    remove.textContent = 'Remover';
+    remove.addEventListener('click', async () => {
+      const removeResponse = await fetch(`/api/board/members/${encodeURIComponent(member.id)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin'
+      });
+      if (removeResponse.ok) loadShareMembers();
+      else {
+        const removeResult = await removeResponse.json();
+        setShareMessage(removeResult.error || 'Não foi possível remover a pessoa.', true);
+      }
+    });
+    row.append(email, remove);
+    shareMembers.append(row);
+  });
+}
+
+$('#openShare').addEventListener('click', async () => {
+  shareModal.showModal();
+  shareEmail.value = '';
+  setShareMessage('');
+  try {
+    await loadShareMembers();
+  } catch (error) {
+    setShareMessage(error.message, true);
+  }
+  shareEmail.focus();
+});
+
+$('#closeShare').addEventListener('click', () => shareModal.close());
+shareModal.addEventListener('click', event => {
+  if (event.target === shareModal) shareModal.close();
+});
+
+shareForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!shareForm.reportValidity()) return;
+  if (boardOwnerId !== currentUser?.id) {
+    setShareMessage('Somente o proprietário pode compartilhar este quadro.', true);
+    return;
+  }
+  try {
+    const response = await fetch('/api/board/members', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: shareEmail.value.trim().toLowerCase() })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Não foi possível compartilhar o quadro.');
+    shareEmail.value = '';
+    setShareMessage(`${result.member.email} agora pode acessar o quadro.`, false);
+    await loadShareMembers();
+  } catch (error) {
+    setShareMessage(error.message, true);
   }
 });
 

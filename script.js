@@ -377,6 +377,38 @@ function cardEl(task) {
   element.draggable = true;
   element.dataset.id = task.id;
 
+  if (window.matchMedia('(hover: hover) and (pointer: fine)').matches &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    let cardFrame = null;
+    element.addEventListener('pointerenter', () => {
+      document.querySelectorAll('.card').forEach(card => {
+        card.classList.toggle('is-lifted', card === element);
+        card.classList.toggle('is-recessed', card !== element);
+      });
+    });
+    element.addEventListener('pointermove', event => {
+      if (cardFrame) cancelAnimationFrame(cardFrame);
+      cardFrame = requestAnimationFrame(() => {
+        const rect = element.getBoundingClientRect();
+        const x = (event.clientX - rect.left) / rect.width - 0.5;
+        const y = (event.clientY - rect.top) / rect.height - 0.5;
+        element.style.setProperty('--mouse-x', `${((event.clientX - rect.left) / rect.width) * 100}%`);
+        element.style.setProperty('--mouse-y', `${((event.clientY - rect.top) / rect.height) * 100}%`);
+        element.style.transform =
+          `translateY(-9px) translateZ(12px) rotateX(${-y * 4}deg) rotateY(${x * 5}deg) scale(1.014)`;
+      });
+    });
+    element.addEventListener('pointerleave', () => {
+      if (cardFrame) cancelAnimationFrame(cardFrame);
+      element.style.transform = '';
+      element.style.setProperty('--mouse-x', '50%');
+      element.style.setProperty('--mouse-y', '50%');
+      document.querySelectorAll('.card').forEach(card => {
+        card.classList.remove('is-lifted', 'is-recessed');
+      });
+    });
+  }
+
   const heading = document.createElement('h3');
   heading.textContent = task.title;
   element.append(heading);

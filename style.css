@@ -383,6 +383,9 @@ header {
 }
 .card {
   position: relative;
+  overflow: hidden;
+  --mouse-x: 50%;
+  --mouse-y: 50%;
   padding: 14px 14px 12px;
   border: 1px solid #484b55;
   border-radius: 13px;
@@ -392,14 +395,72 @@ header {
   transition: border-color .18s ease, transform .38s cubic-bezier(.2,.8,.2,1), box-shadow .38s ease;
   animation: cardEnter .38s cubic-bezier(.2,.75,.25,1) both;
   transform-origin: center bottom;
+  isolation: isolate;
+}
+.card::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      circle 150px at var(--mouse-x) var(--mouse-y),
+      rgba(216, 238, 242, .16),
+      rgba(184, 106, 217, .11) 38%,
+      rgba(56, 168, 124, .09) 68%,
+      transparent 78%
+    );
+  opacity: 0;
+  transition: opacity .24s ease;
+  pointer-events: none;
+}
+.card:hover::before,
+.card.is-lifted::before {
+  opacity: 1;
+}
+.card::after {
+  content: "";
+  position: absolute;
+  z-index: -2;
+  inset: -40%;
+  background: linear-gradient(
+    125deg,
+    rgba(56, 168, 124, .06),
+    transparent 36%,
+    rgba(184, 106, 217, .08),
+    rgba(216, 238, 242, .05)
+  );
+  opacity: 0;
+  transform: translate3d(-8%, 8%, 0) rotate(-8deg);
+  transition: opacity .35s ease, transform .55s cubic-bezier(.2,.8,.2,1);
+  pointer-events: none;
+}
+.card:hover::after,
+.card.is-lifted::after {
+  opacity: 1;
+  transform: translate3d(4%, -3%, 0) rotate(-4deg);
 }
 .card:nth-child(3n + 1) { animation-delay: .04s; }
 .card:nth-child(3n + 2) { animation-delay: .09s; }
 .card:nth-child(3n) { animation-delay: .14s; }
-.card:hover {
+.card:hover,
+.card.is-lifted {
   border-color: color-mix(in srgb, var(--aqua) 38%, #484b55);
   box-shadow: 0 16px 32px rgba(0, 0, 0, .22);
   transform: translateY(-7px) rotateX(2deg) scale(1.012);
+  z-index: 3;
+}
+.card.is-recessed {
+  filter: saturate(.72) brightness(.78);
+  opacity: .72;
+  transform: translateY(5px) scale(.985);
+  z-index: 1;
+}
+.cards:has(.card.is-lifted) .card:not(.is-lifted) {
+  filter: saturate(.72) brightness(.78);
+  opacity: .72;
+  transform: translateY(5px) scale(.985);
 }
 .card:active { cursor: grabbing; }
 .card.dragging { opacity: .4; transform: rotate(1deg); }

@@ -9,9 +9,21 @@ services:
     envVars:
       - key: AI_PROVIDER
         value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: SESSION_SECRET
         sync: false
       - key: AI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_COMPATIBLE_API_KEY
+        sync: false
+      - key: OPENAI_COMPATIBLE_BASE_URL
+        sync: false
+      - key: AI_CREDENTIALS_SECRET
         sync: false

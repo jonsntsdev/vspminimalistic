@@ -28,6 +28,14 @@ const shareForm = $('#shareForm');
 const shareEmail = $('#shareEmail');
 const shareMessage = $('#shareMessage');
 const shareMembers = $('#shareMembers');
+const aiModal = $('#aiModal');
+const aiSettingsForm = $('#aiSettingsForm');
+const aiProvider = $('#aiProvider');
+const aiModel = $('#aiModel');
+const aiApiKey = $('#aiApiKey');
+const aiBaseUrl = $('#aiBaseUrl');
+const aiBaseUrlField = $('#aiBaseUrlField');
+const aiSettingsMessage = $('#aiSettingsMessage');
 
 let authMode = 'login';
 let tasks = [];
@@ -302,6 +310,108 @@ shareForm.addEventListener('submit', async event => {
 
 $('#openChat').addEventListener('click', openChat);
 $('#closeChat').addEventListener('click', closeChat);
+
+function setAISettingsMessage(message, isError = true) {
+  aiSettingsMessage.textContent = message;
+  aiSettingsMessage.hidden = !message;
+  aiSettingsMessage.classList.toggle('is-error', isError);
+}
+
+function applyProviderModelDefaults() {
+  const defaults = {
+    openai: 'gpt-4o-mini',
+    gemini: 'gemini-2.5-flash',
+    anthropic: 'claude-sonnet-4-5',
+    'openai-compatible': 'gpt-4o-mini'
+  };
+  aiBaseUrlField.hidden = aiProvider.value !== 'openai-compatible';
+  aiBaseUrl.required = aiProvider.value === 'openai-compatible';
+  if (!aiModel.dataset.userEdited) aiModel.value = defaults[aiProvider.value];
+}
+
+async function loadAISettings() {
+  setAISettingsMessage('Carregando configurações…', false);
+  const response = await fetch('/api/ai/config', { credentials: 'same-origin' });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Não foi possível carregar a configuração de IA.');
+  aiProvider.value = result.provider;
+  aiModel.value = result.model;
+  aiModel.dataset.userEdited = 'true';
+  aiBaseUrl.value = result.baseUrl || '';
+  aiApiKey.value = '';
+  applyProviderModelDefaults();
+  setAISettingsMessage(
+    result.configuredProviders?.filter(item => item.configured).map(item => item.label).join(', ')
+      ? 'Chaves já configuradas: ' + result.configuredProviders.filter(item => item.configured).map(item => item.label).join(', ')
+      : 'Nenhum provedor está configurado.',
+    true
+  );
+}
+
+$('#openAISettings').addEventListener('click', async () => {
+  aiModal.showModal();
+  aiModel.dataset.userEdited = '';
+  aiApiKey.value = '';
+  try {
+    await loadAISettings();
+  } catch (error) {
+    setAISettingsMessage(error.message, true);
+  }
+});
+
+$('#closeAISettings').addEventListener('click', () => aiModal.close());
+aiModal.addEventListener('click', event => {
+  if (event.target === aiModal) aiModal.close();
+});
+aiProvider.addEventListener('change', () => {
+  aiModel.dataset.userEdited = '';
+  applyProviderModelDefaults();
+});
+aiModel.addEventListener('input', () => {
+  aiModel.dataset.userEdited = 'true';
+});
+
+aiSettingsForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!aiSettingsForm.reportValidity()) return;
+  setAISettingsMessage('Salvando…', false);
+  try {
+    const response = await fetch('/api/ai/config', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: aiProvider.value,
+        model: aiModel.value.trim(),
+        apiKey: aiApiKey.value,
+        baseUrl: aiBaseUrl.value.trim()
+      })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Não foi possível salvar.');
+    aiApiKey.value = '';
+    setAISettingsMessage('Configuração salva com segurança.', false);
+  } catch (error) {
+    setAISettingsMessage(error.message, true);
+  }
+});
+
+$('#testAIConnection').addEventListener('click', async () => {
+  setAISettingsMessage('Testando conexão…', false);
+  try {
+    const response = await fetch('/api/ai/test', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Falha ao testar a conexão.');
+    setAISettingsMessage(`Conexão ativa: ${result.provider} / ${result.model}.`, false);
+  } catch (error) {
+    setAISettingsMessage(error.message, true);
+  }
+});
+
 chatForm.addEventListener('submit', async event => {
   event.preventDefault();
   const message = chatInput.value.trim();

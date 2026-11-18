@@ -93,7 +93,10 @@
         <p class="eyebrow">EDGEKANBANN AI</p>
         <h2 id="chatTitle">Pergunte ao seu projeto</h2>
       </div>
-      <button class="chat-close" id="closeChat" type="button" aria-label="Fechar chat">×</button>
+      <div class="chat-header-actions">
+        <button class="chat-close" id="openAISettings" type="button" aria-label="Configurar inteligência artificial">⚙</button>
+        <button class="chat-close" id="closeChat" type="button" aria-label="Fechar chat">×</button>
+      </div>
     </div>
     <div class="chat-messages" id="chatMessages" role="log" aria-live="polite" aria-relevant="additions">
       <p class="chat-welcome">Pergunte sobre suas tarefas, o que está atrasado ou o que falta fazer.</p>
@@ -119,6 +122,38 @@
       <div class="modal-actions">
         <button type="button" class="btn-ghost" id="closeShare">Fechar</button>
         <button type="submit" class="btn-primary">Compartilhar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="aiModal" aria-labelledby="aiTitle">
+    <form class="modal-body" id="aiSettingsForm">
+      <div>
+        <p class="eyebrow">EDGEKANBANN AI</p>
+        <h2 id="aiTitle">Configurações de IA</h2>
+      </div>
+      <label for="aiProvider">Provedor
+        <select id="aiProvider">
+          <option value="gemini">Google Gemini</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic Claude</option>
+          <option value="openai-compatible">API compatível com OpenAI</option>
+        </select>
+      </label>
+      <label for="aiModel">Modelo
+        <input type="text" id="aiModel" maxlength="200" required placeholder="Ex.: gemini-2.5-flash">
+      </label>
+      <label for="aiApiKey">Chave API
+        <input type="password" id="aiApiKey" maxlength="500" autocomplete="off" placeholder="Somente preenchida se você quiser alterar">
+      </label>
+      <label for="aiBaseUrl" id="aiBaseUrlField" hidden>URL base
+        <input type="url" id="aiBaseUrl" maxlength="500" placeholder="https://api.exemplo.com/v1">
+      </label>
+      <p class="ai-settings-message" id="aiSettingsMessage" role="status" aria-live="polite" hidden></p>
+      <div class="modal-actions ai-settings-actions">
+        <button type="button" class="btn-ghost" id="closeAISettings">Fechar</button>
+        <button type="button" class="btn-ghost" id="testAIConnection">Testar conexão</button>
+        <button type="submit" class="btn-primary">Salvar</button>
       </div>
     </form>
   </dialog>

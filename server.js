@@ -8,12 +8,16 @@ import pg from 'pg';
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
-const AI_PROVIDER = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
-const AI_MODEL = process.env.AI_MODEL || (AI_PROVIDER === 'openai' ? 'gpt-4o-mini' : 'gemini-2.5-flash');
-const AI_API_KEY = process.env.AI_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 const MAX_MESSAGES = 10;
+const AI_CREDENTIALS_SECRET = process.env.AI_CREDENTIALS_SECRET || SESSION_SECRET;
+const AI_PROVIDERS = {
+  openai: { label: 'OpenAI', defaultModel: 'gpt-4o-mini' },
+  gemini: { label: 'Google Gemini', defaultModel: 'gemini-2.5-flash' },
+  anthropic: { label: 'Anthropic Claude', defaultModel: 'claude-sonnet-4-5' },
+  'openai-compatible': { label: 'API compatível OpenAI', defaultModel: 'gpt-4o-mini' }
+};
 const pool = DATABASE_URL ? new pg.Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false }
@@ -83,6 +87,88 @@ app.get('/api/auth/me', async (request, response) => {
   const session = await sessionFromRequest(request);
   if (!session) return response.status(401).json({ error: 'Entre novamente para continuar.' });
   return response.json({ user: { id: session.userId, email: session.email } });
+});
+
+app.get('/api/ai/config', async (request, response) => {
+  const session = await sessionFromRequest(request);
+  if (!session) return response.status(401).json({ error: 'Entre na sua conta para configurar a IA.' });
+  try {
+    const ai = await resolveAIConfig(session.userId);
+    return response.json({
+      provider: ai.provider,
+      model: ai.model,
+      baseUrl: ai.provider === 'openai-compatible' ? ai.baseUrl : '',
+      configuredProviders: ai.configuredProviders,
+      providers: AI_PROVIDERS
+    });
+  } catch (error) {
+    console.error('Falha ao carregar configuração de IA:', error.message);
+    return response.status(500).json({ error: 'Não foi possível carregar as configurações de IA.' });
+  }
+});
+
+app.put('/api/ai/config', async (request, response) => {
+  const session = await sessionFromRequest(request);
+  if (!session) return response.status(401).json({ error: 'Entre na sua conta para configurar a IA.' });
+  const provider = String(request.body?.provider || '').toLowerCase();
+  const model = typeof request.body?.model === 'string' ? request.body.model.trim().slice(0, 200) : '';
+  const apiKey = typeof request.body?.apiKey === 'string' ? request.body.apiKey.trim() : '';
+  const baseUrl = typeof request.body?.baseUrl === 'string' ? request.body.baseUrl.trim().slice(0, 500) : '';
+  if (!Object.hasOwn(AI_PROVIDERS, provider)) return response.status(400).json({ error: 'Provedor de IA inválido.' });
+  if (!model) return response.status(400).json({ error: 'Informe o modelo utilizado.' });
+
+  try {
+    if (provider === 'openai-compatible') {
+      let parsedUrl;
+      try { parsedUrl = new URL(baseUrl); } catch { return response.status(400).json({ error: 'Informe uma URL base válida.' }); }
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) return response.status(400).json({ error: 'A URL base deve usar HTTP ou HTTPS.' });
+      if (parsedUrl.protocol === 'http:' && process.env.RENDER) return response.status(400).json({ error: 'Em produção, use uma URL HTTPS.' });
+    }
+    const encryptedKey = apiKey ? encryptSecret(apiKey) : null;
+    if (encryptedKey) {
+      await pool.query(
+        `INSERT INTO ai_settings (user_id, provider, encrypted_api_key, base_url, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (user_id, provider) DO UPDATE SET
+           encrypted_api_key = EXCLUDED.encrypted_api_key,
+           base_url = EXCLUDED.base_url,
+           updated_at = NOW()`,
+        [session.userId, provider, encryptedKey, provider === 'openai-compatible' ? baseUrl : null]
+      );
+    }
+    await pool.query(
+      `INSERT INTO ai_preferences (user_id, provider, model, base_url, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         provider = EXCLUDED.provider,
+         model = EXCLUDED.model,
+         base_url = EXCLUDED.base_url,
+         updated_at = NOW()`,
+      [session.userId, provider, model, provider === 'openai-compatible' ? baseUrl : null]
+    );
+    return response.json({ ok: true, provider, model });
+  } catch (error) {
+    console.error('Falha ao salvar configuração de IA:', error.message);
+    return response.status(500).json({ error: 'Não foi possível salvar as configurações de IA.' });
+  }
+});
+
+app.post('/api/ai/test', async (request, response) => {
+  const session = await sessionFromRequest(request);
+  if (!session) return response.status(401).json({ error: 'Entre na sua conta para testar a IA.' });
+  const ai = await resolveAIConfig(session.userId);
+  if (!ai.apiKey) return response.status(503).json({ error: `Não há chave API configurada para ${ai.label}.` });
+
+  try {
+    await askAI(ai, [{ role: 'user', content: 'Responda apenas: conexão ativa.' }], []);
+    return response.json({ ok: true, provider: ai.provider, model: ai.model });
+  } catch (error) {
+    return response.status(502).json({
+      error: providerErrorMessage(ai.provider, error),
+      provider: ai.provider,
+      model: ai.model
+    });
+  }
 });
 
 app.get('/api/board/members', async (request, response) => {
@@ -191,13 +277,14 @@ app.put('/api/board', async (request, response) => {
 app.post('/api/ai/chat', async (request, response) => {
   const session = await sessionFromRequest(request);
   if (!session) return response.status(401).json({ error: 'Entre na sua conta para consultar o projeto.' });
-  if (!AI_API_KEY || !['gemini', 'openai'].includes(AI_PROVIDER)) {
-    return response.status(503).json({ error: 'O serviço de IA ainda não está configurado no servidor.' });
-  }
   const messages = normalizeMessages(request.body?.messages);
   if (!messages) return response.status(400).json({ error: 'Envie uma pergunta válida com até 10 mensagens recentes.' });
 
   try {
+    const ai = await resolveAIConfig(session.userId);
+    if (!ai.apiKey) {
+      return response.status(503).json({ error: `Configure uma chave API para ${ai.label} nas configurações de IA.` });
+    }
     const board = await getAccessibleBoard(session.userId);
     if (!board.rows.length) return response.status(404).json({ error: 'Não encontramos um quadro associado à sua conta.' });
     const tasks = board.rows[0].tasks.slice(0, 100).map(task => ({
@@ -206,7 +293,7 @@ app.post('/api/ai/chat', async (request, response) => {
       status: statusLabel(task.status),
       createdAt: taskDate(task.createdAt)
     }));
-    return response.json({ answer: await askAI(messages, tasks) });
+    return response.json({ answer: await askAI(ai, messages, tasks), provider: ai.provider, model: ai.model });
   } catch (error) {
     console.error('Falha ao responder ao chat do projeto:', error.message);
     return response.status(502).json({ error: 'Não foi possível consultar a IA agora. Tente novamente em instantes.' });
@@ -232,7 +319,7 @@ app.listen(PORT, () => {
   console.log(`edgekanbann disponível na porta ${PORT}`);
   if (!pool) console.warn('Configure DATABASE_URL para habilitar Neon.');
   if (!SESSION_SECRET) console.warn('Configure SESSION_SECRET para assinar as sessões.');
-  if (!AI_API_KEY) console.warn('Configure AI_API_KEY no servidor para habilitar o chat.');
+  if (!AI_CREDENTIALS_SECRET) console.warn('Configure SESSION_SECRET ou AI_CREDENTIALS_SECRET para proteger credenciais de IA.');
 });
 
 async function initializeDatabase() {
@@ -262,6 +349,21 @@ async function initializeDatabase() {
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (board_owner_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS ai_settings (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      encrypted_api_key TEXT NOT NULL,
+      base_url TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, provider)
+    );
+    CREATE TABLE IF NOT EXISTS ai_preferences (
+      user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      base_url TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
 }
@@ -353,7 +455,113 @@ function taskDate(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
 }
 
-async function askAI(messages, tasks) {
+async function resolveAIConfig(userId) {
+  let preference = null;
+  let settings = [];
+  if (pool) {
+    const preferenceResult = await pool.query(
+      'SELECT provider, model, base_url FROM ai_preferences WHERE user_id = $1',
+      [userId]
+    );
+    preference = preferenceResult.rows[0] || null;
+    const settingsResult = await pool.query(
+      'SELECT provider, encrypted_api_key, base_url FROM ai_settings WHERE user_id = $1',
+      [userId]
+    );
+    settings = settingsResult.rows;
+  }
+  const provider = preference?.provider && Object.hasOwn(AI_PROVIDERS, preference.provider)
+    ? preference.provider
+    : (process.env.AI_PROVIDER || 'gemini').toLowerCase();
+  const safeProvider = Object.hasOwn(AI_PROVIDERS, provider) ? provider : 'gemini';
+  const model = preference?.model || process.env.AI_MODEL || AI_PROVIDERS[safeProvider].defaultModel;
+  const activeSetting = settings.find(setting => setting.provider === safeProvider);
+  const baseUrl = preference?.base_url || activeSetting?.base_url || process.env.OPENAI_COMPATIBLE_BASE_URL || '';
+  const encryptedKey = activeSetting?.encrypted_api_key;
+  const envKeys = {
+    openai: process.env.OPENAI_API_KEY || process.env.AI_API_KEY,
+    gemini: process.env.GEMINI_API_KEY || process.env.AI_API_KEY,
+    anthropic: process.env.ANTHROPIC_API_KEY,
+    'openai-compatible': process.env.OPENAI_COMPATIBLE_API_KEY
+  };
+  let apiKey = encryptedKey ? decryptSecret(encryptedKey) : null;
+  apiKey = apiKey || envKeys[safeProvider] || null;
+  const configuredProviders = [];
+  for (const [id, config] of Object.entries(AI_PROVIDERS)) {
+    const envKey = envKeys[id];
+    const storedSetting = settings.find(setting => setting.provider === id);
+    configuredProviders.push({
+      id,
+      label: config.label,
+      configured: Boolean(envKey || storedSetting)
+    });
+  }
+  return {
+    provider: safeProvider,
+    label: AI_PROVIDERS[safeProvider].label,
+    model,
+    baseUrl,
+    apiKey,
+    configuredProviders
+  };
+}
+
+function encryptSecret(secret) {
+  if (!AI_CREDENTIALS_SECRET) throw new Error('AI_CREDENTIALS_SECRET não configurada.');
+  const key = crypto.createHash('sha256').update(AI_CREDENTIALS_SECRET).digest();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ciphertext = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${ciphertext.toString('base64')}`;
+}
+
+function decryptSecret(payload) {
+  if (!AI_CREDENTIALS_SECRET || !payload?.startsWith('v1:')) return null;
+  try {
+    const [, ivText, tagText, ciphertextText] = payload.split(':');
+    const key = crypto.createHash('sha256').update(AI_CREDENTIALS_SECRET).digest();
+    const decipher = crypto.createDecipheriv(
+      'aes-256-gcm',
+      key,
+      Buffer.from(ivText, 'base64')
+    );
+    decipher.setAuthTag(Buffer.from(tagText, 'base64'));
+    return Buffer.concat([
+      decipher.update(Buffer.from(ciphertextText, 'base64')),
+      decipher.final()
+    ]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+async function providerResponseError(response, label) {
+  let detail = '';
+  try {
+    const data = await response.json();
+    detail = data.error?.message || data.message || data.error || '';
+  } catch {
+    detail = '';
+  }
+  return new Error(`${label} respondeu com status ${response.status}${detail ? `: ${String(detail).slice(0, 160)}` : ''}`);
+}
+
+function providerErrorMessage(provider, error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/401|403|chave|api[_ -]?key|authentication|permission/i.test(message)) {
+    return `Falha de autenticação no provedor ${AI_PROVIDERS[provider]?.label || provider}. Verifique a chave API.`;
+  }
+  if (/ENOTFOUND|ECONN|timeout|abort|network/i.test(message)) {
+    return `Não foi possível conectar ao provedor ${AI_PROVIDERS[provider]?.label || provider}. Verifique a URL e a conexão.`;
+  }
+  if (/429|quota|rate limit/i.test(message)) {
+    return 'Limite de uso ou cotas do provedor foram atingidos.';
+  }
+  return message || 'Não foi possível comunicar com o provedor de IA.';
+}
+
+async function askAI(ai, messages, tasks) {
   const instructions = [
     'Você é o assistente do Edgekanbann. Responda em português, de forma direta e útil.',
     'Use apenas as tarefas fornecidas como fatos sobre o projeto. Não invente tarefas, responsáveis, prazos ou dados ausentes.',
@@ -364,17 +572,17 @@ async function askAI(messages, tasks) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
   try {
-    return AI_PROVIDER === 'openai'
-      ? await callOpenAI(instructions, messages, controller.signal)
-      : await callGemini(instructions, messages, controller.signal);
+    if (ai.provider === 'gemini') return callGemini(ai, instructions, messages, controller.signal);
+    if (ai.provider === 'anthropic') return callAnthropic(ai, instructions, messages, controller.signal);
+    return callOpenAICompatible(ai, instructions, messages, controller.signal);
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function callGemini(instructions, messages, signal) {
-  const url = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(AI_MODEL)}:generateContent`);
-  url.searchParams.set('key', AI_API_KEY);
+async function callGemini(ai, instructions, messages, signal) {
+  const url = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ai.model)}:generateContent`);
+  url.searchParams.set('key', ai.apiKey);
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -388,26 +596,55 @@ async function callGemini(instructions, messages, signal) {
       generationConfig: { maxOutputTokens: 700, temperature: 0.3 }
     })
   });
-  if (!response.ok) throw new Error(`Gemini respondeu com status ${response.status}`);
+  if (!response.ok) throw await providerResponseError(response, 'Gemini');
   const data = await response.json();
   const answer = data.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim();
   if (!answer) throw new Error('Gemini retornou uma resposta vazia ou bloqueada.');
   return answer;
 }
 
-async function callOpenAI(instructions, messages, signal) {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+async function callAnthropic(ai, instructions, messages, signal) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${AI_API_KEY}`, 'Content-Type': 'application/json' },
+    headers: {
+      'x-api-key': ai.apiKey,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json'
+    },
     signal,
     body: JSON.stringify({
-      model: AI_MODEL,
+      model: ai.model,
+      system: instructions,
+      messages: messages.map(message => ({
+        role: message.role === 'assistant' ? 'assistant' : 'user',
+        content: message.content
+      })),
+      max_tokens: 700,
+      temperature: 0.3
+    })
+  });
+  if (!response.ok) throw await providerResponseError(response, 'Anthropic Claude');
+  const data = await response.json();
+  const answer = data.content?.map(block => block.type === 'text' ? block.text : '').join('').trim();
+  if (!answer) throw new Error('Anthropic Claude retornou uma resposta vazia ou bloqueada.');
+  return answer;
+}
+
+async function callOpenAICompatible(ai, instructions, messages, signal) {
+  const baseUrl = ai.baseUrl || 'https://api.openai.com/v1';
+  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ai.apiKey}`, 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify({
+      model: ai.model,
       messages: [{ role: 'system', content: instructions }, ...messages],
       max_tokens: 700,
       temperature: 0.3
     })
   });
-  if (!response.ok) throw new Error(`OpenAI respondeu com status ${response.status}`);
+  if (!response.ok) throw await providerResponseError(response, ai.label);
   const data = await response.json();
   const answer = data.choices?.[0]?.message?.content?.trim();
   if (!answer) throw new Error('OpenAI retornou uma resposta vazia.');

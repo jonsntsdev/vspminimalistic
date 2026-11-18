@@ -6,8 +6,11 @@ O aplicativo usa PostgreSQL/Neon para contas, sessões e quadros. As senhas são
 
 - `DATABASE_URL`: string de conexão do projeto Neon.
 - `SESSION_SECRET`: texto aleatório longo usado para proteger os IDs das sessões.
-- `AI_PROVIDER`: `gemini` (padrão) ou `openai`.
-- `AI_API_KEY`: chave do provedor de IA.
+- `AI_PROVIDER`: provedor inicial (`gemini`, `openai`, `anthropic` ou `openai-compatible`).
+- `GEMINI_API_KEY`, `OPENAI_API_KEY` ou `ANTHROPIC_API_KEY`: chave por provedor.
+- `OPENAI_COMPATIBLE_API_KEY` e `OPENAI_COMPATIBLE_BASE_URL`: credencial e URL base para APIs compatíveis.
+- `AI_API_KEY`: chave legada compartilhada, mantida para compatibilidade.
+- `AI_CREDENTIALS_SECRET`: chave usada para criptografar credenciais salvas no Neon. Use valor separado e aleatório.
 - `AI_MODEL`: opcional.
 
 As tabelas `users`, `sessions` e `boards` são criadas automaticamente na inicialização.

@@ -251,6 +251,7 @@ header {
   border-bottom: 1px solid var(--line);
 }
 .chat-header h2 { margin-top: 3px; font-size: 1rem; }
+.chat-header-actions { display: flex; gap: 8px; }
 .chat-close {
   display: grid;
   width: 34px;
@@ -519,6 +520,26 @@ dialog[open] { animation: appear .16s ease-out; }
 .optional { color: var(--muted); font-weight: 400; }
 textarea { min-height: 94px; resize: vertical; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 2px; }
+select {
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: rgba(30, 32, 36, .88);
+  color: var(--ink);
+  font: inherit;
+  font-size: .92rem;
+}
+.ai-settings-message {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(56, 168, 124, .1);
+  color: var(--aqua);
+  font-size: .82rem;
+}
+.ai-settings-message.is-error { color: var(--danger); background: rgba(230, 141, 157, .1); }
+.ai-settings-actions { flex-wrap: wrap; }
 .btn-ghost { padding: 10px 15px; }
 .share-message {
   padding: 10px 12px;
